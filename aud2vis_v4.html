@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Audio Visualizer</title>
+  <style>
+    html, body { margin: 0; overflow: hidden; background: #000; color: #eee; font-family: system-ui, sans-serif; }
+    canvas { display: block; }
+    #controls {
+      position: absolute; top: 12px; left: 12px; z-index: 10;
+      display: grid; grid-template-columns: repeat(2, max-content); gap: 8px 14px;
+      background: rgba(0,0,0,0.55); padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(4px);
+    }
+    #controls label { font-size: 12px; opacity: 0.9; }
+    #controls input[type="range"] { width: 160px; }
+    #controls .row { display: contents; }
+    #controls .full { grid-column: 1 / -1; height: 1px; background: rgba(255,255,255,0.08); margin: 4px 0; }
+    #controls input[type="number"], #controls select {
+      width: 160px; padding: 2px 6px; background: #111; color: #eee; border: 1px solid #333; border-radius: 6px;
+    }
+    #controls button, #controls input[type="file"] {
+      background: #fff; color: #000; padding: 6px 10px; border-radius: 6px; font-weight: 700; cursor: pointer; border: none;
+    }
+    #controls .mini { padding: 4px 8px; font-weight: 600; }
+    #micBtn { background: #ff4081; color: #fff; }
+    #tabCaptureBtn { background: #40c4ff; color: #001018; }
+    audio { position: absolute; bottom: 18px; left: 18px; z-index: 10; }
+    .value { font-variant-numeric: tabular-nums; opacity: 0.85; margin-left: 6px; }
+    #toggleControlsBtn {
+      position: absolute; top: 12px; right: 12px; z-index: 20;
+      background: rgba(255,255,255,0.85); color: #000; padding: 4px 8px; font-size: 12px;
+      border-radius: 6px; border: none; cursor: pointer; font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="visualizer"></canvas>
+
+  <button id="toggleControlsBtn">Hide Controls</button>
+
+  <div id="controls">
+    <div class="row">
+      <!-- Audio-reactive grid controls -->
+      <label>Sensitivity</label>
+      <div>
+        <input id="sens" type="range" min="0.01" max="2" step="0.05" value="1.6">
+        <span class="value" id="sensVal">1.60</span>
+      </div>
+
+      <label>Smoothing</label>
+      <div>
+        <input id="smooth" type="range" min="0.02" max="2" step="0.01" value="0.25">
+        <span class="value" id="smoothVal">0.25</span>
+      </div>
+
+      <label>Bass cutoff</label>
+      <div>
+        <input id="cutoff" type="range" min="0.04" max="2" step="0.01" value="0.16">
+        <span class="value" id="cutoffVal">0.16</span>
+      </div>
+
+      <label>FFT size</label>
+      <div>
+        <select id="fftSize">
+          <option>256</option>
+          <option>512</option>
+          <option selected>1024</option>
+          <option>2048</option>
+        </select>
+        <button class="mini" id="applyFFT">Apply</button>
+      </div>
+
+      <label>Grid</label>
+      <div><label><input type="checkbox" id="showGrid" checked> Show</label></div>
+
+      <div class="full"></div>
+
+      <!-- Sources -->
+      <label>numSources</label>
+      <div>
+        <input id="numSources" type="number" min="1" max="64" value="12">
+        <button class="mini" id="applySources">Apply</button>
+      </div>
+
+      <label>snakesPerSource</label>
+      <div>
+        <input id="snakes" type="number" min="1" max="12" value="4">
+        <button class="mini" id="applySnakes">Apply</button>
+      </div>
+
+      <label>trail length</label>
+      <div>
+        <input id="trail" type="number" min="5" max="200" value="20">
+        <button class="mini" id="applyTrail">Apply</button>
+      </div>
+
+      <label>Rotate sources</label>
+      <div><label><input type="checkbox" id="rotateToggle" checked> On</label></div>
+
+      <!-- Inputs -->
+      <label>Mic</label>
+      <div>
+        <button id="micBtn">🎤 Use Microphone</button>
+        <button id="tabCaptureBtn" title="Capture this tab's audio (Chrome/Edge)">🖥️ Capture Tab Audio</button>
+      </div>
+
+      <label>File</label>
+      <div><input type="file" id="audioUpload" accept="audio/*"></div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('visualizer');
+    const ctx = canvas.getContext('2d');
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+
+    window.addEventListener('resize', () => {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      initSources();
+    });
+
+    const audioUpload = document.getElementById('audioUpload');
+    const micBtn = document.getElementById('micBtn');
+    const tabCaptureBtn = document.getElementById('tabCaptureBtn');
+    const toggleBtn = document.getElementById('toggleControlsBtn');
+    const controlsDiv = document.getElementById('controls');
+
+    // Hide/show the toolbar
+    let uiHidden = false;
+    toggleBtn.addEventListener('click', () => {
+      uiHidden = !uiHidden;
+      controlsDiv.style.display = uiHidden ? 'none' : 'grid';
+      toggleBtn.textContent = uiHidden ? 'Show Controls' : 'Hide Controls';
+    });
+
+    // === Audio / analysis ===
+    let audioCtx, analyser, dataArray, bufferLength;
+
+    // Track the active input so only one runs at a time
+    const currentInput = {
+      kind: 'none',            // 'none' | 'mic' | 'file' | 'tab'
+      stream: null,            // MediaStream for mic/tab
+      node: null,              // MediaStreamAudioSourceNode or MediaElementAudioSourceNode
+      element: null            // <audio> element for file input
+    };
+
+    function ensureAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!analyser) {
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = parseInt(document.getElementById('fftSize').value, 10);
+        bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+        // IMPORTANT: no analyser -> destination connection (prevents double playback)
+      }
+    }
+
+    async function resumeAudio() {
+      if (audioCtx && audioCtx.state !== 'running') {
+        try { await audioCtx.resume(); } catch (e) { console.warn('resume failed', e); }
+      }
+    }
+
+    // Cleanly stop/disconnect the current input
+    function stopCurrentInput() {
+      try {
+        if (currentInput.node) { try { currentInput.node.disconnect(); } catch {} currentInput.node = null; }
+        if (currentInput.element) {
+          try { currentInput.element.pause(); } catch {}
+          try { currentInput.element.remove(); } catch {}
+          currentInput.element = null;
+        }
+        if (currentInput.stream) {
+          try { currentInput.stream.getTracks().forEach(t => t.stop()); } catch {}
+          currentInput.stream = null;
+        }
+      } finally {
+        currentInput.kind = 'none';
+      }
+    }
+
+    function setCurrentInput(kind, node, stream=null, element=null) {
+      currentInput.kind = kind;
+      currentInput.node = node;
+      currentInput.stream = stream;
+      currentInput.element = element;
+    }
+
+    // Avoid starting RAF twice
+    let animating = false;
+    function startAnimOnce() {
+      if (!animating) { animating = true; animate(); }
+    }
+
+    // === Visual state ===
+    let sourcePositions = [];
+    let time = 0;
+
+    // UI refs
+    const ui = {
+      sens: document.getElementById('sens'),
+      sensVal: document.getElementById('sensVal'),
+      smooth: document.getElementById('smooth'),
+      smoothVal: document.getElementById('smoothVal'),
+      cutoff: document.getElementById('cutoff'),
+      cutoffVal: document.getElementById('cutoffVal'),
+      showGrid: document.getElementById('showGrid'),
+      fftSel: document.getElementById('fftSize'),
+      applyFFT: document.getElementById('applyFFT'),
+
+      numSources: document.getElementById('numSources'),
+      applySources: document.getElementById('applySources'),
+      snakes: document.getElementById('snakes'),
+      applySnakes: document.getElementById('applySnakes'),
+      trail: document.getElementById('trail'),
+      applyTrail: document.getElementById('applyTrail'),
+
+      rotateToggle: document.getElementById('rotateToggle'),
+    };
+
+    const settings = {
+      BASS_SENS: parseFloat(ui.sens.value),
+      SMOOTH: parseFloat(ui.smooth.value),
+      CUTOFF: parseFloat(ui.cutoff.value),
+      SHOW_GRID: ui.showGrid.checked,
+      FFT_SIZE: parseInt(ui.fftSel.value, 10),
+      numSources: parseInt(ui.numSources.value, 10),
+      snakesPerSource: parseInt(ui.snakes.value, 10),
+      maxLen: parseInt(ui.trail.value, 10),
+      rotateSources: ui.rotateToggle.checked,
+    };
+
+    let bassSmooth = 0;
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    let snakeStates = [];
+    let sourceBaseHues = [];
+
+    function initSources() {
+      sourcePositions = Array.from({ length: settings.numSources }, () => ({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        vx: (Math.random() - 0.5) * 8,
+        vy: (Math.random() - 0.5) * 8
+      }));
+      sourceBaseHues = Array.from({ length: settings.numSources }, (_, i) => Math.floor((360 / settings.numSources) * i));
+      snakeStates = Array.from({ length: settings.numSources }, () =>
+        Array.from({ length: settings.snakesPerSource }, () => ({ angle: Math.random() * Math.PI * 2, path: [] }))
+      );
+    }
+    initSources();
+
+    function reinitSnakesOnly() {
+      snakeStates = sourcePositions.map(() =>
+        Array.from({ length: settings.snakesPerSource }, () => ({ angle: Math.random() * Math.PI * 2, path: [] }))
+      );
+    }
+
+    function getRandomColor(baseHue) {
+      const hue = (baseHue + time * 0.5) % 360;
+      const r = Math.floor(127 + 127 * Math.sin((hue) * Math.PI / 180));
+      const g = Math.floor(127 + 127 * Math.sin((hue + 120) * Math.PI / 180));
+      const b = Math.floor(127 + 127 * Math.sin((hue + 240) * Math.PI / 180));
+      return `rgba(${r},${g},${b},0.7)`;
+    }
+
+    function drawRadialVariant(x, y, amplitude, color, symmetry, variant, time, sourceIndex) {
+      ctx.save();
+      ctx.translate(x, y);
+      if (variant === 0) {
+        const snakes = snakeStates[sourceIndex];
+        const baseRadius = 5;
+        const orbitRadius = baseRadius + amplitude * 0.5;
+        for (let k = 0; k < snakes.length; k++) {
+          const s = snakes[k];
+          const speed = 0.01 + amplitude / 3000;
+          s.angle += speed * (1 + 0.15 * k);
+          const tilt = 0.4 + 0.4 * k;
+          const phase = k * (2 * Math.PI) / snakes.length;
+          const px = Math.cos(s.angle + phase) * orbitRadius;
+          const py = Math.sin(s.angle + phase) * orbitRadius * tilt;
+          s.path.push({ x: px, y: py });
+          if (s.path.length > settings.maxLen) s.path = s.path.slice(-settings.maxLen);
+          for (let t = 1; t < s.path.length; t++) {
+            const p0 = s.path[t - 1], p1 = s.path[t];
+            const a = t / s.path.length;
+            ctx.beginPath();
+            ctx.moveTo(p0.x, p0.y);
+            ctx.lineTo(p1.x, p1.y);
+            ctx.strokeStyle = color;
+            ctx.globalAlpha = 0.12 + 0.88 * a;
+            ctx.lineWidth = 8;
+            ctx.stroke();
+          }
+        }
+        ctx.globalAlpha = 1;
+      } else {
+        for (let i = 0; i < symmetry; i++) {
+          ctx.rotate((2 * Math.PI) / symmetry);
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          const steps = 10;
+          for (let j = 1; j <= steps; j++) {
+            const dist = (amplitude / steps) * j * 1.8;
+            let dx = 0;
+            switch (variant) {
+              case 1: dx = ((j % 2 === 0) ? 1 : -1) * 8; break;
+              case 2: dx = Math.sin(j * 1 + time * 0.1) * 35; break;
+              case 3: dx = (j % 4) * 6; break;
+            }
+            ctx.lineTo(dx, -dist);
+          }
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    // ------- Audio helpers -------
+    function bandEnergy(fracStart, fracEnd) {
+      if (!dataArray || !bufferLength) return 0;
+      const start = Math.floor(bufferLength * Math.max(0, Math.min(1, fracStart)));
+      const end = Math.max(start + 1, Math.floor(bufferLength * Math.max(0, Math.min(1, fracEnd))));
+      let s = 0;
+      for (let i = start; i < end; i++) s += dataArray[i];
+      return s / (end - start);
+    }
+
+    // ------- Grid: mirrored halves -------
+    function drawHalfGrid(t, vpY, groundY, bassAmp, rows, cols, samples) {
+      const vpX = W * 0.5;
+      // Horizontal rows
+      for (let r = 0; r <= rows; r++) {
+        const depth = r / rows;
+        const baseY = vpY + (groundY - vpY) * depth;
+        ctx.beginPath();
+        for (let s = 0; s <= samples; s++) {
+          const u = s / samples;
+          const x = u * W;
+          const wave = (0.6 * bassAmp) * Math.sin(u * 10 + t * 0.05 + depth * 6);
+          const y = baseY + wave * (0.8 + depth * 1.4);
+          if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      // Vertical columns
+      for (let c = -cols; c <= cols; c++) {
+        const lane = c / cols;
+        ctx.beginPath();
+        for (let r = 0; r <= rows; r++) {
+          const depth = r / rows;
+          const spread = (1 - depth) * W * 0.9;
+          const baseX = vpX + lane * spread;
+          const baseY = vpY + (groundY - vpY) * depth;
+          const waveX = (0.5 * bassAmp) * Math.sin(depth * 8 + t * 0.04 + lane * 5);
+          const x = baseX + waveX * (0.9 + depth * 1.5);
+          const y = baseY;
+          if (r === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    function drawGridBackground(t) {
+      if (!settings.SHOW_GRID) return;
+      const bassNow = bandEnergy(0.00, settings.CUTOFF);
+      bassSmooth = lerp(bassSmooth, bassNow, settings.SMOOTH);
+      const bassAmp = bassSmooth * settings.BASS_SENS;
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(140, 200, 255, 0.22)';
+
+      const rows = 20, cols = 14, samples = 28;
+
+      // Bottom half: vanishing point above, projecting down
+      drawHalfGrid(t, -H * 0.10, H, bassAmp, rows, cols, samples);
+      // Top half (mirror): vanishing point below, projecting up
+      drawHalfGrid(t, H * 1.10, 0, bassAmp, rows, cols, samples);
+
+      ctx.restore();
+    }
+
+    // === Animation loop ===
+    function animate() {
+      requestAnimationFrame(animate);
+      if (!analyser) return;
+      analyser.getByteFrequencyData(dataArray);
+      time++;
+
+      // fade
+      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+      ctx.fillRect(0, 0, W, H);
+
+      // draw mirrored grid bg
+      drawGridBackground(time);
+
+      // sources
+      const avgAmp = dataArray.reduce((a, b) => a + b, 0) / (dataArray.length || 1);
+      for (let i = 0; i < settings.numSources; i++) {
+        const amp = (dataArray[Math.floor((i + 1) * bufferLength / settings.numSources)] || 0) * 1.5;
+        const pos = sourcePositions[i];
+        const velocityScale = 0.03 + avgAmp / 120;
+        pos.x += pos.vx * velocityScale;
+        pos.y += pos.vy * velocityScale;
+        if (pos.x < 0 || pos.x > W) pos.vx *= -1;
+        if (pos.y < 0 || pos.y > H) pos.vy *= -1;
+
+        ctx.save();
+        if (settings.rotateSources) {
+          ctx.translate(pos.x, pos.y);
+          ctx.rotate(time * 0.01 + i);
+          ctx.translate(-pos.x, -pos.y);
+        }
+        drawRadialVariant(pos.x, pos.y, amp, getRandomColor(sourceBaseHues[i]), 12, i % 4, time, i);
+        ctx.restore();
+      }
+    }
+
+    // === UI ===
+    function updateLabel(el, val, digits=2) { el.textContent = parseFloat(val).toFixed(digits); }
+
+    ui.sens.addEventListener('input', e => { settings.BASS_SENS = parseFloat(e.target.value); updateLabel(ui.sensVal, settings.BASS_SENS); });
+    ui.smooth.addEventListener('input', e => { settings.SMOOTH = parseFloat(e.target.value); updateLabel(ui.smoothVal, settings.SMOOTH); });
+    ui.cutoff.addEventListener('input', e => { settings.CUTOFF = parseFloat(e.target.value); updateLabel(ui.cutoffVal, settings.CUTOFF); });
+    updateLabel(ui.sensVal, ui.sens.value);
+    updateLabel(ui.smoothVal, ui.smooth.value);
+    updateLabel(ui.cutoffVal, ui.cutoff.value);
+    ui.showGrid.addEventListener('change', e => { settings.SHOW_GRID = e.target.checked; });
+
+    ui.applySources.addEventListener('click', () => {
+      settings.numSources = parseInt(ui.numSources.value, 10);
+      initSources();
+    });
+    ui.applySnakes.addEventListener('click', () => {
+      settings.snakesPerSource = parseInt(ui.snakes.value, 10);
+      reinitSnakesOnly();
+    });
+    ui.applyTrail.addEventListener('click', () => {
+      settings.maxLen = parseInt(ui.trail.value, 10);
+    });
+    ui.rotateToggle.addEventListener('change', e => { settings.rotateSources = e.target.checked; });
+
+    ui.applyFFT.addEventListener('click', () => {
+      settings.FFT_SIZE = parseInt(ui.fftSel.value, 10);
+      if (!analyser) return;
+      analyser.fftSize = settings.FFT_SIZE;
+      bufferLength = analyser.frequencyBinCount;
+      dataArray = new Uint8Array(bufferLength);
+      bassSmooth = 0;
+    });
+
+    // === Input handlers (exclusive) ===
+    audioUpload.addEventListener('change', async function () {
+      const file = this.files[0];
+      if (!file) return;
+
+      const audioURL = URL.createObjectURL(file);
+      const audio = new Audio(audioURL);
+      audio.crossOrigin = "anonymous";
+      audio.loop = true;
+      audio.controls = true;
+
+      stopCurrentInput(); // switch away from any existing input
+
+      document.body.appendChild(audio);
+      audio.style.display = 'block';
+
+      ensureAudioCtx();
+      const node = audioCtx.createMediaElementSource(audio);
+      node.connect(analyser);            // analyzer only; no destination
+
+      try { await resumeAudio(); await audio.play(); } catch (e) { console.warn(e); }
+      setCurrentInput('file', node, null, audio);
+      startAnimOnce();
+    });
+
+    micBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stopCurrentInput();
+
+        ensureAudioCtx();
+        const node = audioCtx.createMediaStreamSource(stream);
+        node.connect(analyser);          // analyzer only; no destination (prevents feedback)
+
+        // Hide any <audio> elements from previous file inputs
+        document.querySelectorAll('audio').forEach(el => el.style.display = 'none');
+
+        await resumeAudio();
+        setCurrentInput('mic', node, stream, null);
+        startAnimOnce();
+      } catch (err) {
+        console.error('Mic access denied:', err);
+        alert('Could not access microphone.');
+      }
+    });
+
+    tabCaptureBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        stopCurrentInput();
+
+        ensureAudioCtx();
+        const node = audioCtx.createMediaStreamSource(stream);
+        node.connect(analyser);          // analyzer only; do NOT route to destination
+
+        await resumeAudio();
+        // Save GPU: disable or stop the captured video track
+        const vtrack = stream.getVideoTracks()[0];
+        if (vtrack) vtrack.enabled = false; // or vtrack.stop();
+
+        setCurrentInput('tab', node, stream, null);
+        startAnimOnce();
+        alert('Capturing tab/system audio for visuals only (no duplicate playback).');
+      } catch (e) {
+        console.error('DisplayMedia error', e);
+        alert('Could not capture tab/system audio. Try Chrome/Edge on desktop and allow audio sharing.');
+      }
+    });
+  </script>
+</body>
+</html>
