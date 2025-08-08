@@ -524,26 +524,36 @@
     audioUpload.addEventListener('change', async function () {
       const file = this.files[0];
       if (!file) return;
-
+    
       const audioURL = URL.createObjectURL(file);
       const audio = new Audio(audioURL);
       audio.crossOrigin = "anonymous";
       audio.loop = true;
       audio.controls = true;
-
+    
       stopCurrentInput(); // switch away from any existing input
-
+    
       document.body.appendChild(audio);
       audio.style.display = 'block';
-
-      ensureNodes();
+    
+      ensureAudioCtx();
+      // Create a Web Audio source from the element
       const node = audioCtx.createMediaElementSource(audio);
-      node.connect(analyser);            // analyzer only; no destination
-
+    
+      // Feed the analyser for visuals
+      node.connect(analyser);
+    
+      // Also route to speakers via Web Audio so you can hear it
+      node.connect(audioCtx.destination);
+    
+      // Mute the HTML element itself so you don't get double playback
+      audio.muted = true;
+    
       try { await resumeAudio(); await audio.play(); } catch (e) { console.warn(e); }
       setCurrentInput('file', node, null, audio);
       startAnimOnce();
     });
+
 
     micBtn.addEventListener('click', async () => {
       try {
