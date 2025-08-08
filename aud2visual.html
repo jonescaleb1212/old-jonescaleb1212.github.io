@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Audio Visualizer</title>
+  <style>
+    html, body {
+      margin: 0;
+      overflow: hidden;
+      background: black;
+    }
+    canvas {
+      display: block;
+    }
+    #controls {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 10;
+      display: flex;
+      gap: 10px;
+    }
+    input[type="file"], button {
+      background: white;
+      color: black;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+    }
+    button#micBtn {
+      background: #ff4081;
+      color: white;
+    }
+    audio {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="visualizer"></canvas>
+  <div id="controls">
+    <input type="file" id="audioUpload" accept="audio/*">
+    <button id="micBtn">🎤 Use Microphone</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('visualizer');
+    const ctx = canvas.getContext('2d');
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+
+    window.addEventListener('resize', () => {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    });
+
+    const audioUpload = document.getElementById('audioUpload');
+    const micBtn = document.getElementById('micBtn');
+
+    let audioCtx, analyser, dataArray, bufferLength;
+    let sourcePositions = [];
+    const numSources = 6;
+    const sourceBaseHues = Array.from({ length: numSources }, (_, i) => Math.floor((360 / numSources) * i));
+
+    // Initialize bouncing source positions
+    function initSources() {
+      sourcePositions = Array.from({ length: numSources }, () => ({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        vx: (Math.random() - 0.5) * 8,
+        vy: (Math.random() - 0.5) * 8
+      }));
+    }
+    initSources();
+
+    // Snake orbit states
+    const snakesPerSource = 3;
+    const maxLen = 100;
+    const snakeStates = Array.from({ length: numSources }, () =>
+      Array.from({ length: snakesPerSource }, () => ({ angle: Math.random() * Math.PI * 2, path: [] }))
+    );
+
+    function getRandomColor(baseHue) {
+      const hue = (baseHue + time * 0.5) % 360;
+      const r = Math.floor(127 + 127 * Math.sin((hue + 0) * Math.PI / 180));
+      const g = Math.floor(127 + 127 * Math.sin((hue + 120) * Math.PI / 180));
+      const b = Math.floor(127 + 127 * Math.sin((hue + 240) * Math.PI / 180));
+      return `rgba(${r},${g},${b},0.7)`;
+    }
+
+    function drawFractal(x, y, size, depth, color) {
+      if (depth === 0 || size < 1) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 0.4 + depth * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(x - size, y);
+      ctx.lineTo(x + size, y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x - size, H - y);
+      ctx.lineTo(x + size, H - y);
+      ctx.stroke();
+      drawFractal(x - size / 2, y - size, size / 2, depth - 1, color);
+      drawFractal(x + size / 2, y - size, size / 2, depth - 1, color);
+      drawFractal(x - size / 2, H - y + size, size / 2, depth - 1, color);
+      drawFractal(x + size / 2, H - y + size, size / 2, depth - 1, color);
+    }
+
+    function drawRadialVariant(x, y, amplitude, color, symmetry, variant, time, sourceIndex) {
+      ctx.save();
+      ctx.translate(x, y);
+      if (variant === 0) {
+        const snakes = snakeStates[sourceIndex];
+        const baseRadius = 60;
+        const orbitRadius = baseRadius + amplitude * 0.5;
+        for (let k = 0; k < snakes.length; k++) {
+          const s = snakes[k];
+          const speed = 0.01 + amplitude / 3000;
+          s.angle += speed * (1 + 0.15 * k);
+          const tilt = 0.7 + 0.3 * k;
+          const phase = k * (2 * Math.PI / snakes.length);
+          const px = Math.cos(s.angle + phase) * orbitRadius;
+          const py = Math.sin(s.angle + phase) * orbitRadius * tilt;
+          s.path.push({ x: px, y: py });
+          if (s.path.length > maxLen) s.path = s.path.slice(-maxLen);
+          for (let t = 1; t < s.path.length; t++) {
+            const p0 = s.path[t - 1], p1 = s.path[t];
+            const a = t / s.path.length;
+            ctx.beginPath();
+            ctx.moveTo(p0.x, p0.y);
+            ctx.lineTo(p1.x, p1.y);
+            ctx.strokeStyle = color;
+            ctx.globalAlpha = 0.12 + 0.88 * a;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        }
+        ctx.globalAlpha = 1;
+      } else {
+        for (let i = 0; i < symmetry; i++) {
+          ctx.rotate((2 * Math.PI) / symmetry);
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          let steps = 10;
+          for (let j = 1; j <= steps; j++) {
+            let dist = (amplitude / steps) * j * 1.8;
+            let dx = 0;
+            switch (variant) {
+              case 1:
+                dx = ((j % 2 === 0) ? 1 : -1) * 8;
+                break;
+              case 2:
+                dx = Math.sin(j * 1 + time * 0.1) * 35;
+                break;
+              case 3:
+                dx = (j % 4) * 6;
+                break;
+            }
+            ctx.lineTo(dx, -dist);
+          }
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    let time = 0;
+    function animate() {
+      requestAnimationFrame(animate);
+      analyser.getByteFrequencyData(dataArray);
+      time++;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+      ctx.fillRect(0, 0, W, H);
+
+      const avgAmp = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      const offset = W / 4;
+      const yPos = H / 2;
+      const fractalColor = `rgba(${Math.min(255, avgAmp * 2.5)}, ${Math.min(255, avgAmp * 1.8)}, 255, 0.08)`;
+      drawFractal(W / 2 - offset, yPos, 80 + avgAmp * 1.5, 5, fractalColor);
+      drawFractal(W / 2 + offset, yPos, 80 + avgAmp * 1.5, 5, fractalColor);
+
+      for (let i = 0; i < numSources; i++) {
+        const amp = dataArray[Math.floor((i + 1) * bufferLength / numSources)] * 1.5;
+        const pos = sourcePositions[i];
+        const velocityScale = 0.05 + avgAmp / 80;
+        pos.x += pos.vx * velocityScale;
+        pos.y += pos.vy * velocityScale;
+        if (pos.x < 0 || pos.x > W) pos.vx *= -1;
+        if (pos.y < 0 || pos.y > H) pos.vy *= -1;
+        const x = pos.x;
+        const y = pos.y;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(time * 0.01 + i);
+        ctx.translate(-x, -y);
+        drawRadialVariant(x, y, amp, getRandomColor(sourceBaseHues[i]), 12, i % 4, time, i);
+        ctx.restore();
+      }
+    }
+
+    // File upload handling
+    audioUpload.addEventListener('change', function () {
+      const file = this.files[0];
+      if (!file) return;
+      const audioURL = URL.createObjectURL(file);
+      const audio = new Audio(audioURL);
+      audio.crossOrigin = "anonymous";
+      audio.loop = true;
+      audio.controls = true;
+      document.body.appendChild(audio);
+      audio.style.display = 'block';
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      const src = audioCtx.createMediaElementSource(audio);
+      src.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      analyser.fftSize = 256;
+      bufferLength = analyser.frequencyBinCount;
+      dataArray = new Uint8Array(bufferLength);
+      audio.play();
+      animate();
+    });
+
+    // Mic mode handling
+    micBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+        const micSource = audioCtx.createMediaStreamSource(stream);
+        micSource.connect(analyser);
+        // Hide audio element if present
+        document.querySelectorAll('audio').forEach(el => el.style.display = 'none');
+        animate();
+      } catch (err) {
+        console.error('Mic access denied:', err);
+        alert('Could not access microphone.');
+      }
+    });
+  </script>
+</body>
+</html>
