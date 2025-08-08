@@ -17,7 +17,7 @@
     #controls .row { display: contents; }
     #controls .full { grid-column: 1 / -1; height: 1px; background: rgba(255,255,255,0.08); margin: 4px 0; }
     #controls input[type="number"], #controls select {
-      width: 160px; padding: 2px 6px; background: #111; color: #eee; border: 1px solid #333; border-radius: 6px;
+      width: 110px; padding: 2px 6px; background: #111; color: #eee; border: 1px solid #333; border-radius: 6px;
     }
     #controls button, #controls input[type="file"] {
       background: #fff; color: #000; padding: 6px 10px; border-radius: 6px; font-weight: 700; cursor: pointer; border: none;
@@ -41,10 +41,18 @@
 
   <div id="controls">
     <div class="row">
-      <!-- Audio-reactive grid controls -->
+      <!-- Background selector -->
+      <label>Background</label>
+      <div>
+        <select id="bgMode">
+          <option value="grid" selected>Grid</option>
+          <option value="fractal">Speakers</option>
+        </select>
+      </div>
+
       <label>Sensitivity</label>
       <div>
-        <input id="sens" type="range" min="0.01" max="2" step="0.05" value="1.6">
+        <input id="sens" type="range" min="0.04" max="3" step="0.01" value="1.6">
         <span class="value" id="sensVal">1.60</span>
       </div>
 
@@ -56,7 +64,7 @@
 
       <label>Bass cutoff</label>
       <div>
-        <input id="cutoff" type="range" min="0.04" max="2" step="0.01" value="0.16">
+        <input id="cutoff" type="range" min="0.04" max="5" step="0.01" value="0.16">
         <span class="value" id="cutoffVal">0.16</span>
       </div>
 
@@ -72,11 +80,12 @@
       </div>
 
       <label>Grid</label>
-      <div><label><input type="checkbox" id="showGrid" checked> Show</label></div>
+      <div>
+        <label><input type="checkbox" id="showGrid" checked> Show</label>
+      </div>
 
       <div class="full"></div>
 
-      <!-- Sources -->
       <label>numSources</label>
       <div>
         <input id="numSources" type="number" min="1" max="64" value="12">
@@ -96,7 +105,9 @@
       </div>
 
       <label>Rotate sources</label>
-      <div><label><input type="checkbox" id="rotateToggle" checked> On</label></div>
+      <div>
+        <label><input type="checkbox" id="rotateToggle" checked> On</label>
+      </div>
 
       <!-- Inputs -->
       <label>Mic</label>
@@ -154,7 +165,7 @@
         analyser.fftSize = parseInt(document.getElementById('fftSize').value, 10);
         bufferLength = analyser.frequencyBinCount;
         dataArray = new Uint8Array(bufferLength);
-        // IMPORTANT: no analyser -> destination connection (prevents double playback)
+        // No analyser -> destination connection (prevents double playback)
       }
     }
 
@@ -201,6 +212,7 @@
 
     // UI refs
     const ui = {
+      bgMode: document.getElementById('bgMode'),
       sens: document.getElementById('sens'),
       sensVal: document.getElementById('sensVal'),
       smooth: document.getElementById('smooth'),
@@ -222,10 +234,11 @@
     };
 
     const settings = {
+      BG_MODE: ui.bgMode.value,                 // 'grid' | 'fractal'
       BASS_SENS: parseFloat(ui.sens.value),
       SMOOTH: parseFloat(ui.smooth.value),
       CUTOFF: parseFloat(ui.cutoff.value),
-      SHOW_GRID: ui.showGrid.checked,
+      SHOW_GRID: ui.showGrid.checked,           // used in grid mode
       FFT_SIZE: parseInt(ui.fftSel.value, 10),
       numSources: parseInt(ui.numSources.value, 10),
       snakesPerSource: parseInt(ui.snakes.value, 10),
@@ -331,7 +344,8 @@
       return s / (end - start);
     }
 
-    // ------- Grid: mirrored halves -------
+    // ------- Backgrounds -------
+    // Grid (draw top and bottom halves)
     function drawHalfGrid(t, vpY, groundY, bassAmp, rows, cols, samples) {
       const vpX = W * 0.5;
       // Horizontal rows
@@ -366,23 +380,50 @@
       }
     }
 
-    function drawGridBackground(t) {
-      if (!settings.SHOW_GRID) return;
-      const bassNow = bandEnergy(0.00, settings.CUTOFF);
-      bassSmooth = lerp(bassSmooth, bassNow, settings.SMOOTH);
-      const bassAmp = bassSmooth * settings.BASS_SENS;
+    // Fractal (old speakers style)
+    function drawFractalLine(x, y, size, depth, color) {
+      if (depth === 0 || size < 1) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 0.4 + depth * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(x - size, y);
+      ctx.lineTo(x + size, y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x - size, H - y);
+      ctx.lineTo(x + size, H - y);
+      ctx.stroke();
+      drawFractalLine(x - size / 2, y - size, size / 2, depth - 1, color);
+      drawFractalLine(x + size / 2, y - size, size / 2, depth - 1, color);
+      drawFractalLine(x - size / 2, H - y + size, size / 2, depth - 1, color);
+      drawFractalLine(x + size / 2, H - y + size, size / 2, depth - 1, color);
+    }
 
-      ctx.save();
-      ctx.strokeStyle = 'rgba(140, 200, 255, 0.22)';
+    function drawBackground(t, avgAmp) {
+      if (settings.BG_MODE === 'fractal') {
+        const fractalColor = `rgba(${Math.min(255, avgAmp * 2.5)}, ${Math.min(255, avgAmp * 1.8)}, 255, 0.08)`;
+        const offset = W / 4;
+        const yPos = H / 2;
+        drawFractalLine(W / 2 - offset, yPos, 80 + avgAmp * 1.5, 5, fractalColor);
+        drawFractalLine(W / 2 + offset, yPos, 80 + avgAmp * 1.5, 5, fractalColor);
+      } else {
+        if (!settings.SHOW_GRID) return;
+        const bassNow = bandEnergy(0.00, settings.CUTOFF);
+        bassSmooth = lerp(bassSmooth, bassNow, settings.SMOOTH);
+        const bassAmp = bassSmooth * settings.BASS_SENS;
 
-      const rows = 20, cols = 14, samples = 28;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(140, 200, 255, 0.22)';
 
-      // Bottom half: vanishing point above, projecting down
-      drawHalfGrid(t, -H * 0.10, H, bassAmp, rows, cols, samples);
-      // Top half (mirror): vanishing point below, projecting up
-      drawHalfGrid(t, H * 1.10, 0, bassAmp, rows, cols, samples);
+        const rows = 20, cols = 14, samples = 28;
 
-      ctx.restore();
+        // Bottom half: vanishing point above, projecting down
+        drawHalfGrid(t, -H * 0.10, H, bassAmp, rows, cols, samples);
+        // Top half (mirror): vanishing point below, projecting up
+        drawHalfGrid(t, H * 1.10, 0, bassAmp, rows, cols, samples);
+
+        ctx.restore();
+      }
     }
 
     // === Animation loop ===
@@ -392,15 +433,16 @@
       analyser.getByteFrequencyData(dataArray);
       time++;
 
-      // fade
+      // background fade
       ctx.fillStyle = 'rgba(0,0,0,0.15)';
       ctx.fillRect(0, 0, W, H);
 
-      // draw mirrored grid bg
-      drawGridBackground(time);
+      const avgAmp = dataArray.reduce((a, b) => a + b, 0) / (dataArray.length || 1);
+
+      // draw background (grid or fractal)
+      drawBackground(time, avgAmp);
 
       // sources
-      const avgAmp = dataArray.reduce((a, b) => a + b, 0) / (dataArray.length || 1);
       for (let i = 0; i < settings.numSources; i++) {
         const amp = (dataArray[Math.floor((i + 1) * bufferLength / settings.numSources)] || 0) * 1.5;
         const pos = sourcePositions[i];
@@ -421,15 +463,28 @@
       }
     }
 
-    // === UI ===
-    function updateLabel(el, val, digits=2) { el.textContent = parseFloat(val).toFixed(digits); }
+    function updateLabel(el, val, digits=2) {
+      el.textContent = parseFloat(val).toFixed(digits);
+    }
 
-    ui.sens.addEventListener('input', e => { settings.BASS_SENS = parseFloat(e.target.value); updateLabel(ui.sensVal, settings.BASS_SENS); });
-    ui.smooth.addEventListener('input', e => { settings.SMOOTH = parseFloat(e.target.value); updateLabel(ui.smoothVal, settings.SMOOTH); });
-    ui.cutoff.addEventListener('input', e => { settings.CUTOFF = parseFloat(e.target.value); updateLabel(ui.cutoffVal, settings.CUTOFF); });
+    // ---- UI wiring ----
+    ui.bgMode.addEventListener('change', e => { settings.BG_MODE = e.target.value; });
+    ui.sens.addEventListener('input', e => {
+      settings.BASS_SENS = parseFloat(e.target.value);
+      updateLabel(ui.sensVal, settings.BASS_SENS);
+    });
+    ui.smooth.addEventListener('input', e => {
+      settings.SMOOTH = parseFloat(e.target.value);
+      updateLabel(ui.smoothVal, settings.SMOOTH);
+    });
+    ui.cutoff.addEventListener('input', e => {
+      settings.CUTOFF = parseFloat(e.target.value);
+      updateLabel(ui.cutoffVal, settings.CUTOFF);
+    });
     updateLabel(ui.sensVal, ui.sens.value);
     updateLabel(ui.smoothVal, ui.smooth.value);
     updateLabel(ui.cutoffVal, ui.cutoff.value);
+
     ui.showGrid.addEventListener('change', e => { settings.SHOW_GRID = e.target.checked; });
 
     ui.applySources.addEventListener('click', () => {
@@ -454,6 +509,17 @@
       bassSmooth = 0;
     });
 
+    // === Audio context helpers ===
+    function ensureNodes() {
+      ensureAudioCtx();
+      if (!analyser) {
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = settings.FFT_SIZE;
+        bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+      }
+    }
+
     // === Input handlers (exclusive) ===
     audioUpload.addEventListener('change', async function () {
       const file = this.files[0];
@@ -470,7 +536,7 @@
       document.body.appendChild(audio);
       audio.style.display = 'block';
 
-      ensureAudioCtx();
+      ensureNodes();
       const node = audioCtx.createMediaElementSource(audio);
       node.connect(analyser);            // analyzer only; no destination
 
@@ -484,9 +550,9 @@
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stopCurrentInput();
 
-        ensureAudioCtx();
+        ensureNodes();
         const node = audioCtx.createMediaStreamSource(stream);
-        node.connect(analyser);          // analyzer only; no destination (prevents feedback)
+        node.connect(analyser);          // analyzer only; no destination
 
         // Hide any <audio> elements from previous file inputs
         document.querySelectorAll('audio').forEach(el => el.style.display = 'none');
@@ -505,7 +571,7 @@
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         stopCurrentInput();
 
-        ensureAudioCtx();
+        ensureNodes();
         const node = audioCtx.createMediaStreamSource(stream);
         node.connect(analyser);          // analyzer only; do NOT route to destination
 
