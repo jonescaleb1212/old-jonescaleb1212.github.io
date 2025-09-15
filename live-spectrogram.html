@@ -5,12 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Live Microphone Spectrogram (Scrolling) — Colormaps</title>
 <style>
-  :root{
-    --bg:#0b1020; --panel:#0f1730; --fg:#e8f1ff; --muted:#9fb4d1; --line:#1f2a54;
-  }
+  :root{ --bg:#0b1020; --panel:#0f1730; --fg:#e8f1ff; --muted:#9fb4d1; --line:#1f2a54; }
   html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  header,footer{padding:.75rem 1rem;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#101835,#0b1020)}
-  footer{border-top:1px solid var(--line);border-bottom:none;background:linear-gradient(0deg,#101835,#0b1020);font-size:.9rem;opacity:.9}
+  header{padding:.75rem 1rem;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#101835,#0b1020)}
   main{display:grid;grid-template-columns:1fr 340px;gap:12px;padding:12px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
   .row{display:flex;align-items:center;gap:8px;justify-content:space-between;margin:.35rem 0}
@@ -20,6 +17,8 @@
   button.primary{background:#1a3a6b;border-color:#345ea2}
   #wrap{position:relative}
   #spec{width:100%;height:calc(100vh - 230px);background:#061024;border:1px solid var(--line);border-radius:12px;display:block}
+  /* Fullscreen canvas tweaks */
+  #spec:fullscreen{width:100vw;height:100vh;border-radius:0;border:none}
   .axis{position:absolute;pointer-events:none;color:#cfe3ff80;font-size:12px}
   #yticks{left:8px;top:8px}
   #xticks{right:12px;bottom:8px;text-align:right}
@@ -33,12 +32,13 @@
 <header>
   <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
     <div style="font-weight:700;font-size:1.1rem">Live Mic Spectrogram</div>
-    <div class="hint">Scrolling x-axis (time) • Selectable colormaps • Adjustable FFT & freq range.</div>
+    <div class="hint">Scrolling x-axis • Selectable colormaps • Adjustable FFT & freq range.</div>
   </div>
   <div style="display:flex;gap:.5rem;flex-wrap:wrap">
     <button id="start" class="primary">▶ Start</button>
     <button id="pause">⏸ Pause</button>
     <button id="save">💾 Save PNG</button>
+    <button id="fs">⛶ Fullscreen</button>
   </div>
 </header>
 
@@ -138,11 +138,6 @@
   </div>
 </main>
 
-<footer>
-  <div>WebAudio + Canvas • Real‑time STFT • Selectable colormaps</div>
-  <div class="hint">All audio stays local in your browser.</div>
-</footer>
-
 <script>
 /* ======== UI refs ======== */
 const canvas = document.getElementById('spec');
@@ -153,6 +148,7 @@ const xticks  = document.getElementById('xticks');
 const startBtn = document.getElementById('start');
 const pauseBtn = document.getElementById('pause');
 const saveBtn  = document.getElementById('save');
+const fsBtn    = document.getElementById('fs');
 
 const seconds   = document.getElementById('seconds');
 const secondsVal= document.getElementById('secondsVal');
@@ -185,12 +181,29 @@ fminSl.oninput  = ()=> (document.getElementById('fminVal').textContent = fminSl.
 fmaxSl.oninput  = ()=> (document.getElementById('fmaxVal').textContent = fmaxSl.value, rebuildYmap());
 logyChk.onchange = ()=> rebuildYmap();
 invertYChk.onchange = ()=> rebuildYmap();
-showGridChk.onchange = ()=> {/* toggled live */};
+showGridChk.onchange = ()=> {/* toggle live */};
 
 cmapSel.onchange = ()=> buildPalette();
 invertChk.onchange = ()=> buildPalette();
 gammaSl.oninput   = ()=> { gammaVal.textContent = gammaSl.value; };
 gammaSl.onchange  = ()=> buildPalette();
+
+/* ======== Fullscreen helpers ======== */
+function toggleFullscreen(){
+  const el = canvas; // full-screen just the spectrogram canvas
+  if(!document.fullscreenElement){
+    (el.requestFullscreen && el.requestFullscreen()) || (el.webkitRequestFullscreen && el.webkitRequestFullscreen());
+  } else {
+    document.exitFullscreen && document.exitFullscreen();
+  }
+}
+function onFsChange(){
+  const isFs = !!document.fullscreenElement;
+  fsBtn.textContent = isFs ? '🡼 Exit Fullscreen' : '⛶ Fullscreen';
+  setTimeout(()=>{ resizeCanvasToDisplaySize(); }, 50);
+}
+fsBtn.onclick = toggleFullscreen;
+document.addEventListener('fullscreenchange', onFsChange);
 
 /* ======== Audio ======== */
 let audioCtx, analyser, mic, gain;
@@ -223,6 +236,17 @@ function setAnalyserFFT(fftSize){
 }
 fftSel.onchange = ()=> setAnalyserFFT(+fftSel.value);
 
+/* ======== Canvas size management ======== */
+let colBuf = new Uint8ClampedArray((canvas.height|0) * 4); // 1px column buffer
+function allocateColBuf(){ colBuf = new Uint8ClampedArray((canvas.height|0) * 4); }
+function resizeCanvasToDisplaySize(){
+  const cssW = canvas.clientWidth|0; const cssH = canvas.clientHeight|0;
+  if(canvas.width !== cssW || canvas.height !== cssH){
+    canvas.width = cssW; canvas.height = cssH; allocateColBuf(); rebuildYmap(); drawXTicks();
+  }
+}
+window.addEventListener('resize', ()=> setTimeout(resizeCanvasToDisplaySize, 50));
+
 /* ======== Y-axis mapping (log/linear, invertable) ======== */
 let y2bin = null, y2frac = null;
 function rebuildYmap(){
@@ -239,38 +263,29 @@ function rebuildYmap(){
     const t = y/(H-1); // 0 top -> 1 bottom
     let f;
     if(logyChk.checked){
-      if(invY){ // top high, bottom low (natural)
-        f = fmax * Math.pow(fmin/fmax, t);
-      } else { // top low, bottom high
-        f = fmin * Math.pow(fmax/fmin, t);
-      }
+      if(invY){ f = fmax * Math.pow(fmin/fmax, t); }
+      else { f = fmin * Math.pow(fmax/fmin, t); }
     } else {
       f = invY ? (fmax - t*(fmax - fmin)) : (fmin + t*(fmax - fmin));
     }
     const idx = Math.max(0, Math.min(analyser.frequencyBinCount-1, f/binHz));
     const i0 = Math.floor(idx);
-    y2bin[y]  = i0;
-    y2frac[y] = idx - i0;
+    y2bin[y]  = i0; y2frac[y] = idx - i0;
   }
   drawYTicks();
 }
 
 function drawYTicks(){
   const H = canvas.height|0;
-  const fmin = +fminSl.value, fmax = +fmaxSl.value;
-  const invY = invertYChk.checked;
+  const fmin = +fminSl.value, fmax = +fmaxSl.value; const invY = invertYChk.checked;
   const ticks = logyChk.checked
     ? [100,200,300,500,1000,2000,3000,5000,8000,12000,16000,20000].filter(f=>f>=fmin && f<=fmax)
     : Array.from({length:6}, (_,k)=> Math.round(fmin + k*(fmax-fmin)/5));
   let html = '';
   for(const f of ticks){
     let pos;
-    if(logyChk.checked){
-      const L = Math.log(fmax) - Math.log(fmin);
-      pos = invY ? (Math.log(fmax)-Math.log(f))/L : (Math.log(f)-Math.log(fmin))/L;
-    } else {
-      pos = invY ? (fmax-f)/(fmax-fmin) : (f-fmin)/(fmax-fmin);
-    }
+    if(logyChk.checked){ const L = Math.log(fmax) - Math.log(fmin); pos = invY ? (Math.log(fmax)-Math.log(f))/L : (Math.log(f)-Math.log(fmin))/L; }
+    else { pos = invY ? (fmax-f)/(fmax-fmin) : (f-fmin)/(fmax-fmin); }
     const y = Math.round(pos*(H-1))+8;
     html += `<div style="position:absolute;left:0;top:${y}px;">${f>=1000?(f/1000).toFixed(f%1000?1:0)+'k':f} Hz</div>`;
   }
@@ -278,17 +293,12 @@ function drawYTicks(){
 }
 
 function drawXTicks(){
-  const W = canvas.width|0; const secs = +seconds.value; const tps = W/secs; // px per second
-  const maxTicks = Math.min(secs, 12);
+  const W = canvas.width|0; const secs = +seconds.value; const tps = W/secs; const maxTicks = Math.min(secs, 12);
   let html = '';
-  for(let s=0;s<=maxTicks;s++){
-    const x = W - Math.round(s*tps);
-    html += `<div style="position:absolute;right:0;bottom:${8+16*s}px;">${s}s</div>`;
-  }
+  for(let s=0;s<=maxTicks;s++){ const x = W - Math.round(s*tps); html += `<div style="position:absolute;right:0;bottom:${8+16*s}px;">${s}s</div>`; }
   xticks.innerHTML = html;
 }
 seconds.onchange = ()=> drawXTicks();
-window.addEventListener('resize', ()=> setTimeout(()=>{ drawXTicks(); drawYTicks(); }, 50));
 
 /* ======== Colormaps (LUT builder) ======== */
 const CMAPS = {
@@ -322,21 +332,19 @@ function buildPalette(){
   const W = swatch.width|0, H = swatch.height|0; const img = swctx.createImageData(W,H);
   for(let x=0;x<W;x++){
     const k = Math.max(0, Math.min(255, Math.round((x/(W-1))*255))); const o3 = k*3;
-    for(let y=0;y<H;y++){
-      const p = (y*W + x)*4; img.data[p]=LUT[o3]; img.data[p+1]=LUT[o3+1]; img.data[p+2]=LUT[o3+2]; img.data[p+3]=255;
-    }
+    for(let y=0;y<H;y++){ const p = (y*W + x)*4; img.data[p]=LUT[o3]; img.data[p+1]=LUT[o3+1]; img.data[p+2]=LUT[o3+2]; img.data[p+3]=255; }
   }
   swctx.putImageData(img,0,0);
 }
 buildPalette();
 
 /* ======== Renderer ======== */
-const colBuf = new Uint8ClampedArray((canvas.height|0) * 4); // 1px column buffer
 let lastTime = performance.now();
 let pxAccum = 0;
 
 function step(nowMs){
   const now = nowMs || performance.now();
+  resizeCanvasToDisplaySize();
   if(running && !paused){
     const dt = (now - lastTime) / 1000;
     const pxPerSec = (canvas.width|0) / (+seconds.value);
@@ -372,7 +380,7 @@ function paintSpectrogramColumns(cols){
 }
 
 function drawGridOverlay(){
-  if(!showGridChk.checked) return;  // <-- toggle grid
+  if(!showGridChk.checked) return;
   const W = canvas.width|0, H = canvas.height|0; ctx.save(); ctx.globalAlpha = 0.1; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
   for(let y=100; y<H; y+=100){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
   const tps = W/(+seconds.value);
