@@ -53,8 +53,13 @@
     input[type="number"]{width: 90px; padding:6px 8px; border-radius:10px; border:1px solid var(--stroke); background: rgba(255,255,255,.04); color:var(--text);}
     select{
       width: 210px; padding:6px 8px; border-radius:10px;
-      border:1px solid var(--stroke); background: rgba(255,255,255,.04); color:var(--text);
+      border:1px solid var(--stroke);
+      background: #ffffff; color: #000000;
+      -webkit-appearance: none; -moz-appearance: none; appearance: none;
     }
+    /* Force dropdown and option contrast: black text on white background */
+    select option { color: #000000; background: #ffffff; }
+    select::-ms-expand{ display: none; }
     .btns{display:flex; gap:8px; flex-wrap:wrap;}
     button{
       cursor:pointer;
@@ -103,7 +108,7 @@
 <div id="ui">
   <div id="leftCol" class="panel">
     <header>
-      <div class="title">Boids + Predators <span class="chip">high-capacity + pretty</span></div>
+      <div class="title">Boids + Predators</div>
       <div class="btns">
         <button id="pauseBtn" class="wide">Pause</button>
         <button id="resetBtn" class="wide danger">Reset</button>
@@ -122,7 +127,7 @@
 
       <div class="row">
         <label>Predators (live)</label>
-        <input id="predN" type="number" min="0" max="5000" value="18" step="1">
+        <input id="predN" type="number" min="0" max="5000" value="0" step="1">
       </div>
 
       <div class="row">
@@ -179,6 +184,10 @@
         <div class="toggle"><span>Hide toolbars</span> <input id="hideUI" type="checkbox"></div>
         <div class="toggle"><span>Remove predators</span> <input id="noPreds" type="checkbox"></div>
       </div>
+
+      <div class="toggleRow">
+        <div class="toggle"><span>Auto-spawn birds</span> <input id="autoSpawn" type="checkbox"></div>
+      </div>
     </div>
     <div class="hint">
       <div class="kv"><span>Tip</span><b>drag the mouse</b></div>
@@ -188,11 +197,10 @@
 
   <div id="rightCol" class="panel">
     <header>
-      <div class="title">Look + Predators <span class="chip" style="border-color:rgba(255,124,156,.25)">spice</span></div>
+      <div class="title">Look + Predators</div>
       <div class="btns">
         <button id="burstBtn" class="wide good">Burst</button>
         <button id="screenshotBtn" class="wide">PNG</button>
-        <button id="fastBtn" class="wide good">Fast Flocks</button>
       </div>
     </header>
     <div class="content">
@@ -274,7 +282,7 @@
 </div>
 
 <div id="debugMsg" style="position:fixed;left:12px;bottom:12px;color:#fff;z-index:9999;pointer-events:none;background:rgba(0,0,0,0.4);padding:6px 8px;border-radius:8px;font-size:12px;">loading…</div>
-<button id="uiToggleBtn" title="Show UI" style="position:fixed;left:12px;bottom:12px;color:#fff;z-index:10000;pointer-events:auto;background:rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.08);padding:6px 8px;border-radius:8px;font-size:12px;display:none;">Show UI</button>
+<button id="uiToggleBtn" title="Show UI" style="position:fixed;left:12px;top:12px;bottom:auto;color:#fff;z-index:10000;pointer-events:auto;background:rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.08);padding:6px 8px;border-radius:8px;font-size:12px;display:none;">Show UI</button>
 <script>
 (() => {
   try {
@@ -319,6 +327,7 @@
     trails: UI('trails'),
     dbg: UI('dbg'),
     hideUI: UI('hideUI'),
+    autoSpawn: UI('autoSpawn'),
     noPreds: UI('noPreds'),
     shape: UI('shape'),
     bSize: UI('bSize'),
@@ -355,9 +364,10 @@
     bMaxV: 1200,
     bMaxF: 400,
     bounds: 'wrap',
+    autoSpawn: false,
 
     // predators
-    predators: 18,
+    predators: 0,
     pMaxV: 340,
     pMaxF: 180,
     huntR: 120,
@@ -430,6 +440,8 @@
     params.fear = +el.fear.value;
     params.pSep = +el.pSep.value;
 
+    params.autoSpawn = el.autoSpawn.checked;
+
     // control the small toggle button visibility when UI hidden
     if (el.uiToggleBtn){
       const btn = el.uiToggleBtn;
@@ -439,7 +451,7 @@
   }
   [
     'speed','birdsN','predN','percep','sepRad','ali','coh','sep','bMaxV','bMaxF',
-    'bounds','blur','glow','trails','dbg','hideUI','noPreds','shape','bSize','colorMode','glowAmt',
+    'bounds','blur','glow','trails','dbg','hideUI','noPreds','autoSpawn','shape','bSize','colorMode','glowAmt',
     'trailPersist','pMaxV','pMaxF','huntR','killD','fear','pSep','bgFade'
   ].forEach(id => {
     const node = UI(id);
@@ -452,24 +464,7 @@
     params.paused = !params.paused;
     el.pauseBtn.textContent = params.paused ? "Resume" : "Pause";
   });
-  if (el.fastBtn){
-    el.fastBtn.addEventListener('click', () => {
-      // tuned fast-flock preset
-      el.percep.value = '100';
-      el.sepRad.value = '40';
-      el.ali.value = '180';
-      el.coh.value = '8';
-      el.sep.value = '260';
-      el.bMaxV.value = '2200';
-      el.bMaxF.value = '1200';
-      el.pMaxV.value = '2200';
-      el.fear.value = '600';
-      el.trails.checked = true;
-      el.noPreds.checked = false;
-      syncFromUI();
-      ensurePopulations();
-    });
-  }
+  // Fast Flocks preset removed.
   if (el.uiToggleBtn){
     el.uiToggleBtn.addEventListener('click', () => {
       if (el.hideUI) el.hideUI.checked = false;
@@ -574,7 +569,9 @@
     pCooldown[i] = rand(0.0, 0.8);
   }
   function ensurePopulations(){
-    const targetB = params.birds|0;
+    // When autoSpawn is disabled, don't grow the live population even if the UI requests more
+    let targetB = params.birds|0;
+    if (!params.autoSpawn && targetB > bN) targetB = bN;
     if (targetB !== bN){
       const old = bN;
       const oldbx=bx, oldby=by, oldbvx=bvx, oldbvy=bvy, oldbphase=bphase;
@@ -749,13 +746,24 @@
       const x = bx[i], y = by[i];
 
       // Neighbor aggregates
-      let count = 0;
-      let ax = 0, ay = 0;     // alignment
-      let cx = 0, cy = 0;     // cohesion
-      let sx = 0, sy = 0;     // separation
+      // We'll use K-nearest neighbors for alignment/cohesion (classical approach)
+      const K_NEAR = 8;
+      let kn = 0;
+      const knDist = new Float32Array(K_NEAR);
+      const knVx = new Float32Array(K_NEAR);
+      const knVy = new Float32Array(K_NEAR);
+      const knX = new Float32Array(K_NEAR);
+      const knY = new Float32Array(K_NEAR);
+      for (let kk=0; kk<K_NEAR; kk++) knDist[kk] = 1e30;
+      let ax = 0, ay = 0;     // alignment (computed from kn)
+      let cx = 0, cy = 0;     // cohesion (computed from kn)
+      let sx = 0, sy = 0;     // separation (use all close neighbors)
 
       // Predator fear
       let fx = 0, fy = 0;
+
+      // local neighbor count (within perception)
+      let count = 0;
 
       forNeighborCells(x,y,(cell)=>{
         // Birds
@@ -766,18 +774,31 @@
           const d2 = dx*dx + dy*dy;
           if (d2 > R2) continue;
 
-          count++;
-          ax += bvx[j];
-          ay += bvy[j];
-          cx += bx[j];
-          cy += by[j];
-
+          // Separation remains based on all very close neighbors
           if (d2 < sR2){
-            // Stronger when closer
-            const inv = 1.0 / (Math.sqrt(d2) + 0.0001);
-            sx -= dx * inv;
-            sy -= dy * inv;
+            const d = Math.sqrt(d2) + 0.0001;
+            const closeness = Math.max(0, (sR - d) / sR);
+            const inv = 1.0 / d;
+            const repulseFactor = 1.4;
+            sx -= dx * inv * closeness * repulseFactor;
+            sy -= dy * inv * closeness * repulseFactor;
           }
+
+          // Maintain K nearest neighbors (by distance) for alignment/cohesion
+          // find current worst (max) distance slot
+          let worst = 0; let worstD = knDist[0];
+          for (let kk=1; kk<K_NEAR; kk++){
+            if (knDist[kk] > worstD){ worstD = knDist[kk]; worst = kk; }
+          }
+          if (kn < K_NEAR){
+            // append
+            knX[kn] = bx[j]; knY[kn] = by[j]; knVx[kn] = bvx[j]; knVy[kn] = bvy[j]; knDist[kn] = d2; kn++;
+          } else if (d2 < worstD){
+            // replace worst
+            knX[worst] = bx[j]; knY[worst] = by[j]; knVx[worst] = bvx[j]; knVy[worst] = bvy[j]; knDist[worst] = d2;
+          }
+          // increment visible-neighbor count
+          count++;
         }
 
         // Predators (fear)
@@ -792,20 +813,27 @@
         }
       });
 
+      // compute alignment/cohesion from K-nearest (if any)
+      if (kn > 0){
+        ax = 0; ay = 0; cx = 0; cy = 0;
+        for (let kk=0; kk<kn; kk++){
+          ax += knVx[kk]; ay += knVy[kk];
+          cx += knX[kk]; cy += knY[kk];
+        }
+        ax /= kn; ay /= kn; cx /= kn; cy /= kn;
+      }
+
       let steerX = 0, steerY = 0;
 
       if (count > 0){
-        // Alignment: match average velocity
-        ax /= count; ay /= count;
+        // Alignment: match average velocity (from kn)
         let [lax, lay] = limitVec(ax, ay, maxV);
         lax -= bvx[i]; lay -= bvy[i];
         [lax, lay] = limitVec(lax, lay, maxF);
         steerX += lax * wAli;
         steerY += lay * wAli;
 
-        // Cohesion: toward average position
-        cx /= count; cy /= count;
-        // Cohesion scaled by distance: avoid strong braking when already near centroid
+        // Cohesion: toward average position (from kn)
         let dx = cx - x; let dy = cy - y;
         const dist = Math.sqrt(dx*dx + dy*dy);
         if (dist > 1e-4){
@@ -815,16 +843,20 @@
           let steerCx = desiredX - bvx[i];
           let steerCy = desiredY - bvy[i];
           [steerCx, steerCy] = limitVec(steerCx, steerCy, maxF);
-          steerX += steerCx * wCoh;
-          steerY += steerCy * wCoh;
+          // reduce cohesion influence when many neighbors are present (prevents group braking)
+          const cohDensityFactor = Math.max(0.25, 1 / Math.sqrt(count));
+          steerX += steerCx * wCoh * cohDensityFactor;
+          steerY += steerCy * wCoh * cohDensityFactor;
         }
 
         // Separation: away from close neighbors
         let [ssx, ssy] = limitVec(sx, sy, maxV);
         ssx -= bvx[i]; ssy -= bvy[i];
         [ssx, ssy] = limitVec(ssx, ssy, maxF);
-        steerX += ssx * wSep;
-        steerY += ssy * wSep;
+        // increase separation effectiveness in denser local groups so it doesn't average out
+        const sepMult = Math.min(3.0, 1 + Math.sqrt(count) * 0.12);
+        steerX += ssx * wSep * sepMult;
+        steerY += ssy * wSep * sepMult;
       }
 
       // Fear from predators
@@ -849,14 +881,23 @@
         }
       }
 
-      // Per-bird correlated wander: larger, persistent noise to break symmetric clusters
+      // Per-bird correlated wander: stronger persistent noise to break symmetric clusters
       const tNow = performance.now() * 0.001;
-      const wanderForce = Math.max(0.5, params.bMaxF * 0.06);
+      const wanderForce = Math.max(1.0, params.bMaxF * 0.10);
       steerX += Math.cos(bphase[i] + tNow * 0.6) * wanderForce;
       steerY += Math.sin(bphase[i] + tNow * 0.9) * wanderForce;
 
+      // small low-speed 'kick' to prevent boids from getting stuck with near-zero speed
+      const curSpeed = Math.hypot(bvx[i], bvy[i]);
+      const minSpeedThreshold = maxV * 0.18;
+      if (curSpeed < minSpeedThreshold){
+        const kick = Math.max(1.0, maxF * 0.45);
+        steerX += Math.cos(bphase[i]*4.7 + tNow*0.9) * kick;
+        steerY += Math.sin(bphase[i]*6.3 + tNow*0.7) * kick;
+      }
+
       // advance per-bird phase slowly so noise evolves
-      bphase[i] += dt * 0.5;
+      bphase[i] += dt * 0.6;
 
       // Integrate
       let vx = bvx[i] + steerX * dt;
@@ -1043,11 +1084,14 @@
       ctx.arc(0,0, s*0.55, 0, TAU);
       ctx.fill();
     } else if (params.shape === 'chev'){
+      // Draw a distinct chevron shape (V-like) with an internal notch
       ctx.beginPath();
-      ctx.moveTo(s*1.1, 0);
-      ctx.lineTo(-s*0.9, -s*0.55);
-      ctx.lineTo(-s*0.35, 0);
-      ctx.lineTo(-s*0.9, s*0.55);
+      ctx.moveTo(s * 1.15, 0);
+      ctx.lineTo(0, -s * 0.55);
+      ctx.lineTo(-s * 0.65, -s * 0.20);
+      ctx.lineTo(-s * 0.15, 0);
+      ctx.lineTo(-s * 0.65, s * 0.20);
+      ctx.lineTo(0, s * 0.55);
       ctx.closePath();
       ctx.fill();
     } else if (params.shape === 'kite'){
