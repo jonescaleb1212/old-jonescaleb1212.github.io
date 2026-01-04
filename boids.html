@@ -131,7 +131,7 @@
       </div>
       <div class="row">
         <label>Separation radius</label>
-        <input id="sepRad" type="range" min="2" max="60" value="18">
+        <input id="sepRad" type="range" min="2" max="60" value="36">
       </div>
 
       <div class="row">
@@ -144,7 +144,7 @@
       </div>
       <div class="row">
         <label>Separation strength</label>
-        <input id="sep" type="range" min="0" max="400" value="80">
+        <input id="sep" type="range" min="0" max="400" value="160">
       </div>
 
       <div class="row">
@@ -166,12 +166,12 @@
       </div>
 
       <div class="toggleRow">
-        <div class="toggle"><span>Motion blur</span> <input id="blur" type="checkbox" checked></div>
-        <div class="toggle"><span>Additive glow</span> <input id="glow" type="checkbox" checked></div>
+        <div class="toggle"><span>Motion blur</span> <input id="blur" type="checkbox"></div>
+        <div class="toggle"><span>Additive glow</span> <input id="glow" type="checkbox"></div>
       </div>
 
       <div class="toggleRow">
-        <div class="toggle"><span>Draw trails</span> <input id="trails" type="checkbox" checked></div>
+        <div class="toggle"><span>Draw trails</span> <input id="trails" type="checkbox"></div>
         <div class="toggle"><span>Show debug grid</span> <input id="dbg" type="checkbox"></div>
       </div>
 
@@ -192,6 +192,7 @@
       <div class="btns">
         <button id="burstBtn" class="wide good">Burst</button>
         <button id="screenshotBtn" class="wide">PNG</button>
+        <button id="fastBtn" class="wide good">Fast Flocks</button>
       </div>
     </header>
     <div class="content">
@@ -334,6 +335,7 @@
     fps: UI('fps'),
     birdsLive: UI('birdsLive'),
     predLive: UI('predLive'),
+    fastBtn: UI('fastBtn'),
     uiToggleBtn: UI('uiToggleBtn'),
   };
 
@@ -346,10 +348,10 @@
     // boids
     birds: 2000,
     percep: 60,
-    sepRad: 18,
+    sepRad: 36,
     wAli: 1.40,
     wCoh: 0.30,
-    wSep: 0.80,
+    wSep: 1.60,
     bMaxV: 1200,
     bMaxF: 400,
     bounds: 'wrap',
@@ -364,9 +366,9 @@
     pSep: 140,
 
     // render
-    motionBlur: true,
-    additiveGlow: true,
-    trails: true,
+    motionBlur: false,
+    additiveGlow: false,
+    trails: false,
     debugGrid: false,
     shape: 'tri',
     bSize: 6,
@@ -450,6 +452,24 @@
     params.paused = !params.paused;
     el.pauseBtn.textContent = params.paused ? "Resume" : "Pause";
   });
+  if (el.fastBtn){
+    el.fastBtn.addEventListener('click', () => {
+      // tuned fast-flock preset
+      el.percep.value = '100';
+      el.sepRad.value = '40';
+      el.ali.value = '180';
+      el.coh.value = '8';
+      el.sep.value = '260';
+      el.bMaxV.value = '2200';
+      el.bMaxF.value = '1200';
+      el.pMaxV.value = '2200';
+      el.fear.value = '600';
+      el.trails.checked = true;
+      el.noPreds.checked = false;
+      syncFromUI();
+      ensurePopulations();
+    });
+  }
   if (el.uiToggleBtn){
     el.uiToggleBtn.addEventListener('click', () => {
       if (el.hideUI) el.hideUI.checked = false;
@@ -509,6 +529,7 @@
   // Birds
   let bN = 0;
   let bx, by, bvx, bvy;
+  let bphase;
 
   // Predators
   let pN = 0;
@@ -520,6 +541,7 @@
     by = new Float32Array(bN);
     bvx = new Float32Array(bN);
     bvy = new Float32Array(bN);
+    bphase = new Float32Array(bN);
     nextB = new Int32Array(bN);
   }
   function allocPreds(n){
@@ -536,9 +558,11 @@
     bx[i] = rand(W);
     by[i] = rand(H);
     const a = rand(TAU);
-    const s = rand(20, 80);
+    // start birds with a higher base speed so flocks have momentum
+    const s = rand(80, 220);
     bvx[i] = Math.cos(a)*s;
     bvy[i] = Math.sin(a)*s;
+    bphase[i] = rand(TAU);
   }
   function seedPred(i){
     px[i] = rand(W);
@@ -553,11 +577,12 @@
     const targetB = params.birds|0;
     if (targetB !== bN){
       const old = bN;
-      const oldbx=bx, oldby=by, oldbvx=bvx, oldbvy=bvy;
+      const oldbx=bx, oldby=by, oldbvx=bvx, oldbvy=bvy, oldbphase=bphase;
       allocBirds(targetB);
       const keep = Math.min(old, bN);
       for (let i=0;i<keep;i++){
         bx[i]=oldbx[i]; by[i]=oldby[i]; bvx[i]=oldbvx[i]; bvy[i]=oldbvy[i];
+        bphase[i]=oldbphase[i];
       }
       for (let i=keep;i<bN;i++) seedBird(i);
     }
@@ -780,13 +805,19 @@
 
         // Cohesion: toward average position
         cx /= count; cy /= count;
-        let tx = (cx - x);
-        let ty = (cy - y);
-        [tx, ty] = limitVec(tx, ty, maxV);
-        tx -= bvx[i]; ty -= bvy[i];
-        [tx, ty] = limitVec(tx, ty, maxF);
-        steerX += tx * wCoh;
-        steerY += ty * wCoh;
+        // Cohesion scaled by distance: avoid strong braking when already near centroid
+        let dx = cx - x; let dy = cy - y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist > 1e-4){
+          const cohesScale = Math.min(1, dist / params.percep);
+          let desiredX = (dx / dist) * maxV * cohesScale;
+          let desiredY = (dy / dist) * maxV * cohesScale;
+          let steerCx = desiredX - bvx[i];
+          let steerCy = desiredY - bvy[i];
+          [steerCx, steerCy] = limitVec(steerCx, steerCy, maxF);
+          steerX += steerCx * wCoh;
+          steerY += steerCy * wCoh;
+        }
 
         // Separation: away from close neighbors
         let [ssx, ssy] = limitVec(sx, sy, maxV);
@@ -817,6 +848,15 @@
           steerY += dy * inv * s;
         }
       }
+
+      // Per-bird correlated wander: larger, persistent noise to break symmetric clusters
+      const tNow = performance.now() * 0.001;
+      const wanderForce = Math.max(0.5, params.bMaxF * 0.06);
+      steerX += Math.cos(bphase[i] + tNow * 0.6) * wanderForce;
+      steerY += Math.sin(bphase[i] + tNow * 0.9) * wanderForce;
+
+      // advance per-bird phase slowly so noise evolves
+      bphase[i] += dt * 0.5;
 
       // Integrate
       let vx = bvx[i] + steerX * dt;
