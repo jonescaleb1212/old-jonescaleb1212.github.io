@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>High-Capacity Boids + Predators (A-Life)</title>
+  <style>
+    :root{
+      --bg:#070912;
+      --panel: rgba(15,18,28,.72);
+      --panel2: rgba(15,18,28,.50);
+      --stroke: rgba(255,255,255,.12);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.66);
+      --accent: #7cf7ff;
+      --warn: #ff7c9c;
+      --good: #9dff7c;
+    }
+    html,body{height:100%; margin:0; background:var(--bg); overflow:hidden; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
+    canvas{display:block; width:100vw; height:100vh;}
+    #ui{
+      position: fixed; top: 12px; left: 12px; right: 12px;
+      display:flex; gap:12px; align-items:flex-start; pointer-events:none;
+    }
+    .panel{
+      pointer-events:auto;
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: var(--text);
+      overflow:hidden;
+    }
+    .panel header{
+      padding: 10px 12px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0));
+      border-bottom: 1px solid var(--stroke);
+    }
+    .title{font-weight:700; letter-spacing:.2px; font-size:13px; display:flex; align-items:center; gap:8px;}
+    .chip{
+      font-size:11px; color:var(--muted);
+      border:1px solid var(--stroke);
+      background: rgba(255,255,255,.04);
+      padding: 2px 8px; border-radius: 999px;
+    }
+    .panel .content{padding: 10px 12px; display:grid; gap:10px;}
+    .row{display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;}
+    label{font-size:11px; color:var(--muted); user-select:none;}
+    input[type="range"]{width: 200px; accent-color: var(--accent);}
+    input[type="number"]{width: 90px; padding:6px 8px; border-radius:10px; border:1px solid var(--stroke); background: rgba(255,255,255,.04); color:var(--text);}
+    select{
+      width: 210px; padding:6px 8px; border-radius:10px;
+      border:1px solid var(--stroke); background: rgba(255,255,255,.04); color:var(--text);
+    }
+    .btns{display:flex; gap:8px; flex-wrap:wrap;}
+    button{
+      cursor:pointer;
+      border-radius: 12px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+      padding: 7px 10px;
+      font-weight: 650;
+      font-size: 12px;
+      transition: transform .06s ease, background .12s ease;
+    }
+    button:hover{background: rgba(255,255,255,.09);}
+    button:active{transform: translateY(1px);}
+    .wide{min-width: 98px;}
+    .danger{border-color: rgba(255,124,156,.35); background: rgba(255,124,156,.10);}
+    .good{border-color: rgba(157,255,124,.28); background: rgba(157,255,124,.10);}
+    .hint{
+      font-size:11px; color:var(--muted);
+      line-height:1.25;
+      padding: 10px 12px;
+      background: var(--panel2);
+      border-top:1px solid var(--stroke);
+    }
+    .spacer{width: 1px; height: 1px;}
+    #leftCol{width: 360px; max-width: calc(100vw - 24px);}
+    #rightCol{margin-left:auto; width: 330px; max-width: calc(100vw - 24px);}
+    .kv{font-size:11px; color:var(--muted); display:flex; justify-content:space-between; gap:10px;}
+    .kv b{color:var(--text);}
+    .tiny{font-size:10px; opacity:.85;}
+    .toggleRow{display:flex; gap:10px; align-items:center; justify-content:space-between;}
+    .toggle{
+      display:flex; align-items:center; gap:8px; user-select:none; font-size:11px; color:var(--muted);
+    }
+    .toggle input{accent-color: var(--accent);}
+    @media (max-width: 860px){
+      #ui{flex-direction:column;}
+      #rightCol{margin-left:0; width: 360px;}
+      input[type="range"]{width: 180px;}
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div id="leftCol" class="panel">
+    <header>
+      <div class="title">Boids + Predators <span class="chip">high-capacity + pretty</span></div>
+      <div class="btns">
+        <button id="pauseBtn" class="wide">Pause</button>
+        <button id="resetBtn" class="wide danger">Reset</button>
+      </div>
+    </header>
+    <div class="content">
+      <div class="row">
+        <label>Simulation speed</label>
+        <input id="speed" type="range" min="0" max="300" value="100">
+      </div>
+
+      <div class="row">
+        <label>Birds (live)</label>
+        <input id="birdsN" type="number" min="0" max="200000" value="2000" step="100">
+      </div>
+
+      <div class="row">
+        <label>Predators (live)</label>
+        <input id="predN" type="number" min="0" max="5000" value="18" step="1">
+      </div>
+
+      <div class="row">
+        <label>Perception radius</label>
+        <input id="percep" type="range" min="5" max="200" value="60">
+      </div>
+      <div class="row">
+        <label>Separation radius</label>
+        <input id="sepRad" type="range" min="2" max="60" value="18">
+      </div>
+
+      <div class="row">
+        <label>Alignment strength</label>
+        <input id="ali" type="range" min="0" max="200" value="140">
+      </div>
+      <div class="row">
+        <label>Cohesion strength</label>
+        <input id="coh" type="range" min="0" max="200" value="30">
+      </div>
+      <div class="row">
+        <label>Separation strength</label>
+        <input id="sep" type="range" min="0" max="400" value="80">
+      </div>
+
+      <div class="row">
+        <label>Max bird speed</label>
+        <input id="bMaxV" type="range" min="10" max="6000" value="1200">
+      </div>
+      <div class="row">
+        <label>Max bird force</label>
+        <input id="bMaxF" type="range" min="1" max="2000" value="400">
+      </div>
+
+      <div class="row">
+        <label>Wall behavior</label>
+        <select id="bounds">
+          <option value="wrap" selected>Wrap (toroidal)</option>
+          <option value="bounce">Bounce</option>
+          <option value="steer">Steer-in (soft walls)</option>
+        </select>
+      </div>
+
+      <div class="toggleRow">
+        <div class="toggle"><span>Motion blur</span> <input id="blur" type="checkbox" checked></div>
+        <div class="toggle"><span>Additive glow</span> <input id="glow" type="checkbox" checked></div>
+      </div>
+
+      <div class="toggleRow">
+        <div class="toggle"><span>Draw trails</span> <input id="trails" type="checkbox" checked></div>
+        <div class="toggle"><span>Show debug grid</span> <input id="dbg" type="checkbox"></div>
+      </div>
+
+      <div class="toggleRow">
+        <div class="toggle"><span>Hide toolbars</span> <input id="hideUI" type="checkbox"></div>
+        <div class="toggle"><span>Remove predators</span> <input id="noPreds" type="checkbox"></div>
+      </div>
+    </div>
+    <div class="hint">
+      <div class="kv"><span>Tip</span><b>drag the mouse</b></div>
+      <div class="tiny">Left mouse = attract birds. Right mouse = repel birds. Predators auto-hunt the nearest prey in range.</div>
+    </div>
+  </div>
+
+  <div id="rightCol" class="panel">
+    <header>
+      <div class="title">Look + Predators <span class="chip" style="border-color:rgba(255,124,156,.25)">spice</span></div>
+      <div class="btns">
+        <button id="burstBtn" class="wide good">Burst</button>
+        <button id="screenshotBtn" class="wide">PNG</button>
+      </div>
+    </header>
+    <div class="content">
+      <div class="row">
+        <label>Bird shape</label>
+        <select id="shape">
+          <option value="tri" selected>Triangle</option>
+          <option value="chev">Chevron</option>
+          <option value="dot">Dot</option>
+          <option value="kite">Kite</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label>Bird size</label>
+        <input id="bSize" type="range" min="2" max="18" value="6">
+      </div>
+
+      <div class="row">
+        <label>Color mode</label>
+        <select id="colorMode">
+          <option value="speed" selected>By speed (neon)</option>
+          <option value="heading">By heading (rainbow)</option>
+          <option value="mono">Monochrome</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label>Glow intensity</label>
+        <input id="glowAmt" type="range" min="0" max="200" value="70">
+      </div>
+
+      <div class="row">
+        <label>Trail persistence</label>
+        <input id="trailPersist" type="range" min="0" max="100" value="78">
+      </div>
+
+      <div class="row">
+        <label>Predator speed</label>
+        <input id="pMaxV" type="range" min="20" max="6000" value="340">
+      </div>
+      <div class="row">
+        <label>Predator force</label>
+        <input id="pMaxF" type="range" min="5" max="500" value="180">
+      </div>
+      <div class="row">
+        <label>Hunt radius</label>
+        <input id="huntR" type="range" min="10" max="240" value="120">
+      </div>
+      <div class="row">
+        <label>Kill distance</label>
+        <input id="killD" type="range" min="2" max="40" value="10">
+      </div>
+
+      <div class="row">
+        <label>Fear strength (birds flee)</label>
+        <input id="fear" type="range" min="0" max="600" value="240">
+      </div>
+      <div class="row">
+        <label>Predator separation</label>
+        <input id="pSep" type="range" min="0" max="600" value="140">
+      </div>
+
+      <div class="row">
+        <label>Background fade</label>
+        <input id="bgFade" type="range" min="0" max="100" value="28">
+      </div>
+
+      <div class="kv"><span>FPS</span><b id="fps">—</b></div>
+      <div class="kv"><span>Birds</span><b id="birdsLive">—</b></div>
+      <div class="kv"><span>Predators</span><b id="predLive">—</b></div>
+    </div>
+    <div class="hint">
+      <div class="tiny">
+        High-capacity tricks: uniform-grid neighbor search, typed arrays, minimal allocations, batched draw.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="debugMsg" style="position:fixed;left:12px;bottom:12px;color:#fff;z-index:9999;pointer-events:none;background:rgba(0,0,0,0.4);padding:6px 8px;border-radius:8px;font-size:12px;">loading…</div>
+<button id="uiToggleBtn" title="Show UI" style="position:fixed;left:12px;bottom:12px;color:#fff;z-index:10000;pointer-events:auto;background:rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.08);padding:6px 8px;border-radius:8px;font-size:12px;display:none;">Show UI</button>
+<script>
+(() => {
+  try {
+  // ===== Canvas =====
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+
+  let W = 0, H = 0, DPR = 1;
+  function resize(){
+    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    W = Math.floor(window.innerWidth);
+    H = Math.floor(window.innerHeight);
+    canvas.width  = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize, { passive:true });
+  resize();
+
+  // ===== UI =====
+  const UI = id => document.getElementById(id);
+  const el = {
+    pauseBtn: UI('pauseBtn'),
+    resetBtn: UI('resetBtn'),
+    burstBtn: UI('burstBtn'),
+    screenshotBtn: UI('screenshotBtn'),
+    speed: UI('speed'),
+    birdsN: UI('birdsN'),
+    predN: UI('predN'),
+    percep: UI('percep'),
+    sepRad: UI('sepRad'),
+    ali: UI('ali'),
+    coh: UI('coh'),
+    sep: UI('sep'),
+    bMaxV: UI('bMaxV'),
+    bMaxF: UI('bMaxF'),
+    bounds: UI('bounds'),
+    blur: UI('blur'),
+    glow: UI('glow'),
+    trails: UI('trails'),
+    dbg: UI('dbg'),
+    hideUI: UI('hideUI'),
+    noPreds: UI('noPreds'),
+    shape: UI('shape'),
+    bSize: UI('bSize'),
+    colorMode: UI('colorMode'),
+    glowAmt: UI('glowAmt'),
+    trailPersist: UI('trailPersist'),
+    pMaxV: UI('pMaxV'),
+    pMaxF: UI('pMaxF'),
+    huntR: UI('huntR'),
+    killD: UI('killD'),
+    fear: UI('fear'),
+    pSep: UI('pSep'),
+    bgFade: UI('bgFade'),
+    fps: UI('fps'),
+    birdsLive: UI('birdsLive'),
+    predLive: UI('predLive'),
+    uiToggleBtn: UI('uiToggleBtn'),
+  };
+
+  const params = {
+    paused: false,
+
+    // sim
+    speed: 1.0,
+
+    // boids
+    birds: 2000,
+    percep: 60,
+    sepRad: 18,
+    wAli: 1.40,
+    wCoh: 0.30,
+    wSep: 0.80,
+    bMaxV: 1200,
+    bMaxF: 400,
+    bounds: 'wrap',
+
+    // predators
+    predators: 18,
+    pMaxV: 340,
+    pMaxF: 180,
+    huntR: 120,
+    killD: 10,
+    fear: 240,
+    pSep: 140,
+
+    // render
+    motionBlur: true,
+    additiveGlow: true,
+    trails: true,
+    debugGrid: false,
+    shape: 'tri',
+    bSize: 6,
+    colorMode: 'speed',
+    glowAmt: 0.70,
+    trailPersist: 0.78,
+    bgFade: 0.28,
+  };
+
+  // ===== Helpers =====
+  const TAU = Math.PI * 2;
+  const rand = (a=1,b=0)=> Math.random()*(a-b)+b;
+  const clamp = (x,a,b)=> x<a?a:(x>b?b:x);
+  const clampInt = (x,a,b)=> Math.floor(clamp(x,a,b));
+  const hypot = Math.hypot;
+
+  function syncFromUI(){
+    params.speed = (+el.speed.value) / 100;
+
+    params.birds = clampInt(+el.birdsN.value, 0, 200000);
+    if (el.noPreds && el.noPreds.checked) params.predators = 0;
+    else params.predators = clampInt(+el.predN.value, 0, 5000);
+
+    params.percep = +el.percep.value;
+    params.sepRad = +el.sepRad.value;
+
+    params.wAli = (+el.ali.value) / 100;
+    params.wCoh = (+el.coh.value) / 100;
+    params.wSep = (+el.sep.value) / 100;
+
+    params.bMaxV = +el.bMaxV.value;
+    params.bMaxF = +el.bMaxF.value;
+
+    params.bounds = el.bounds.value;
+
+    params.motionBlur = el.blur.checked;
+    params.additiveGlow = el.glow.checked;
+    params.trails = el.trails.checked;
+    params.debugGrid = el.dbg.checked;
+
+    // hide UI panels
+    if (el.hideUI){
+      const u = document.getElementById('ui');
+      if (u) u.style.display = el.hideUI.checked ? 'none' : 'flex';
+    }
+
+    params.shape = el.shape.value;
+    params.bSize = +el.bSize.value;
+    params.colorMode = el.colorMode.value;
+
+    params.glowAmt = (+el.glowAmt.value)/100;
+    params.trailPersist = (+el.trailPersist.value)/100;
+    params.bgFade = (+el.bgFade.value)/100;
+
+    params.pMaxV = +el.pMaxV.value;
+    params.pMaxF = +el.pMaxF.value;
+    params.huntR = +el.huntR.value;
+    params.killD = +el.killD.value;
+    params.fear = +el.fear.value;
+    params.pSep = +el.pSep.value;
+
+    // control the small toggle button visibility when UI hidden
+    if (el.uiToggleBtn){
+      const btn = el.uiToggleBtn;
+      if (el.hideUI && el.hideUI.checked) btn.style.display = 'block';
+      else btn.style.display = 'none';
+    }
+  }
+  [
+    'speed','birdsN','predN','percep','sepRad','ali','coh','sep','bMaxV','bMaxF',
+    'bounds','blur','glow','trails','dbg','hideUI','noPreds','shape','bSize','colorMode','glowAmt',
+    'trailPersist','pMaxV','pMaxF','huntR','killD','fear','pSep','bgFade'
+  ].forEach(id => {
+    const node = UI(id);
+    node.addEventListener('input', syncFromUI, { passive:true });
+    node.addEventListener('change', syncFromUI, { passive:true });
+  });
+  syncFromUI();
+
+  el.pauseBtn.addEventListener('click', () => {
+    params.paused = !params.paused;
+    el.pauseBtn.textContent = params.paused ? "Resume" : "Pause";
+  });
+  if (el.uiToggleBtn){
+    el.uiToggleBtn.addEventListener('click', () => {
+      if (el.hideUI) el.hideUI.checked = false;
+      syncFromUI();
+    });
+  }
+  el.resetBtn.addEventListener('click', () => resetAll());
+  el.burstBtn.addEventListener('click', () => burst());
+  el.screenshotBtn.addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.download = 'boids.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  });
+
+
+  // ===== Spatial Hash (Uniform Grid) =====
+  // We rebuild each frame. For speed, use linked-list style arrays:
+  // head[cell] -> firstIndex, next[i] -> nextIndex in same cell.
+  let cellSize = 40; // updated from percep
+  let gridCols = 1, gridRows = 1, gridN = 1;
+  let head = new Int32Array(1);
+  let nextB = new Int32Array(1);
+  let nextP = new Int32Array(1);
+
+  function rebuildGrid(){
+    cellSize = Math.max(8, Math.floor(params.percep));
+    gridCols = Math.max(1, Math.floor(W / cellSize) + 1);
+    gridRows = Math.max(1, Math.floor(H / cellSize) + 1);
+    gridN = gridCols * gridRows;
+
+    if (head.length !== gridN) head = new Int32Array(gridN);
+    head.fill(-1);
+  }
+  function cellIndex(x,y){
+    let cx = (x / cellSize) | 0;
+    let cy = (y / cellSize) | 0;
+    if (cx < 0) cx = 0; else if (cx >= gridCols) cx = gridCols-1;
+    if (cy < 0) cy = 0; else if (cy >= gridRows) cy = gridRows-1;
+    return cy * gridCols + cx;
+  }
+  function forNeighborCells(x,y, fn){
+    const cx = (x / cellSize) | 0;
+    const cy = (y / cellSize) | 0;
+    for (let oy=-1; oy<=1; oy++){
+      const yy = cy + oy;
+      if (yy < 0 || yy >= gridRows) continue;
+      for (let ox=-1; ox<=1; ox++){
+        const xx = cx + ox;
+        if (xx < 0 || xx >= gridCols) continue;
+        fn(yy * gridCols + xx);
+      }
+    }
+  }
+
+  // ===== Agents (typed arrays) =====
+  // Birds
+  let bN = 0;
+  let bx, by, bvx, bvy;
+
+  // Predators
+  let pN = 0;
+  let px, py, pvx, pvy, pCooldown;
+
+  function allocBirds(n){
+    bN = n|0;
+    bx = new Float32Array(bN);
+    by = new Float32Array(bN);
+    bvx = new Float32Array(bN);
+    bvy = new Float32Array(bN);
+    nextB = new Int32Array(bN);
+  }
+  function allocPreds(n){
+    pN = n|0;
+    px = new Float32Array(pN);
+    py = new Float32Array(pN);
+    pvx = new Float32Array(pN);
+    pvy = new Float32Array(pN);
+    pCooldown = new Float32Array(pN);
+    nextP = new Int32Array(pN);
+  }
+
+  function seedBird(i){
+    bx[i] = rand(W);
+    by[i] = rand(H);
+    const a = rand(TAU);
+    const s = rand(20, 80);
+    bvx[i] = Math.cos(a)*s;
+    bvy[i] = Math.sin(a)*s;
+  }
+  function seedPred(i){
+    px[i] = rand(W);
+    py[i] = rand(H);
+    const a = rand(TAU);
+    const s = rand(60, 120);
+    pvx[i] = Math.cos(a)*s;
+    pvy[i] = Math.sin(a)*s;
+    pCooldown[i] = rand(0.0, 0.8);
+  }
+  function ensurePopulations(){
+    const targetB = params.birds|0;
+    if (targetB !== bN){
+      const old = bN;
+      const oldbx=bx, oldby=by, oldbvx=bvx, oldbvy=bvy;
+      allocBirds(targetB);
+      const keep = Math.min(old, bN);
+      for (let i=0;i<keep;i++){
+        bx[i]=oldbx[i]; by[i]=oldby[i]; bvx[i]=oldbvx[i]; bvy[i]=oldbvy[i];
+      }
+      for (let i=keep;i<bN;i++) seedBird(i);
+    }
+
+    const targetP = params.predators|0;
+    if (targetP !== pN){
+      const old = pN;
+      const oldpx=px, oldpy=py, oldpvx=pvx, oldpvy=pvy, oldcd=pCooldown;
+      allocPreds(targetP);
+      const keep = Math.min(old, pN);
+      for (let i=0;i<keep;i++){
+        px[i]=oldpx[i]; py[i]=oldpy[i]; pvx[i]=oldpvx[i]; pvy[i]=oldpvy[i]; pCooldown[i]=oldcd[i];
+      }
+      for (let i=keep;i<pN;i++) seedPred(i);
+    }
+  }
+
+  function resetAll(){
+    syncFromUI();
+    rebuildGrid();
+    allocBirds(params.birds);
+    allocPreds(params.predators);
+    for (let i=0;i<bN;i++) seedBird(i);
+    for (let i=0;i<pN;i++) seedPred(i);
+  }
+  resetAll();
+
+  // Resize-aware soft reset positions (keep counts)
+  window.addEventListener('resize', () => {
+    rebuildGrid();
+    // Keep agents within bounds after resize
+    for (let i=0;i<bN;i++){ bx[i] = clamp(bx[i], 0, W); by[i] = clamp(by[i], 0, H); }
+    for (let i=0;i<pN;i++){ px[i] = clamp(px[i], 0, W); py[i] = clamp(py[i], 0, H); }
+  }, { passive:true });
+
+  // ===== Mouse interaction =====
+  const mouse = { x:0, y:0, down:false, repel:false };
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  window.addEventListener('mousemove', (e) => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+  }, { passive:true });
+  window.addEventListener('mousedown', (e) => {
+    mouse.down = true;
+    mouse.repel = (e.button === 2);
+  }, { passive:true });
+  window.addEventListener('mouseup', () => {
+    mouse.down = false;
+  }, { passive:true });
+
+  // ===== Burst =====
+  function burst(){
+    // A quick cinematic burst: shove velocities outward from center + spawn a few predators.
+    const cx = W*0.5, cy = H*0.5;
+    for (let i=0;i<bN;i++){
+      const dx = bx[i]-cx, dy = by[i]-cy;
+      const inv = 1.0 / (Math.sqrt(dx*dx+dy*dy) + 40);
+      bvx[i] += dx * inv * 1200;
+      bvy[i] += dy * inv * 1200;
+    }
+    // Add a few predators via UI bump (respects max)
+    el.predN.value = clampInt(+el.predN.value + 6, 0, 5000);
+    syncFromUI();
+    ensurePopulations();
+  }
+
+  // ===== Physics: steering =====
+  function limitVec(x,y, max){
+    const m2 = x*x + y*y;
+    if (m2 > max*max){
+      const inv = max / Math.sqrt(m2);
+      return [x*inv, y*inv];
+    }
+    return [x,y];
+  }
+
+  function applyBounds(x,y,vx,vy, maxV){
+    const mode = params.bounds;
+
+    if (mode === 'wrap'){
+      if (x < 0) x += W; else if (x >= W) x -= W;
+      if (y < 0) y += H; else if (y >= H) y -= H;
+      return [x,y,vx,vy];
+    }
+
+    if (mode === 'bounce'){
+      if (x < 0){ x = 0; vx = Math.abs(vx); }
+      else if (x > W){ x = W; vx = -Math.abs(vx); }
+      if (y < 0){ y = 0; vy = Math.abs(vy); }
+      else if (y > H){ y = H; vy = -Math.abs(vy); }
+      return [x,y,vx,vy];
+    }
+
+    // steer-in (soft walls)
+    const margin = Math.min(140, Math.max(40, Math.floor(params.percep*2)));
+    let ax = 0, ay = 0;
+    if (x < margin) ax += (margin - x) / margin;
+    else if (x > W - margin) ax -= (x - (W - margin)) / margin;
+    if (y < margin) ay += (margin - y) / margin;
+    else if (y > H - margin) ay -= (y - (H - margin)) / margin;
+
+    if (ax || ay){
+      const [lx,ly] = limitVec(ax,ay, 1);
+      vx += lx * maxV * 0.18;
+      vy += ly * maxV * 0.18;
+    }
+    x = clamp(x, 0, W);
+    y = clamp(y, 0, H);
+    return [x,y,vx,vy];
+  }
+
+  // ===== Update =====
+  function buildBirdGrid(){
+    // Put birds into head[] list
+    for (let i=0;i<bN;i++){
+      const c = cellIndex(bx[i], by[i]);
+      nextB[i] = head[c];
+      head[c] = i;
+    }
+  }
+  function buildPredGrid(){
+    // Overload head[] by chaining predators AFTER birds in same head list?
+    // We'll keep predators in a separate headP list for clarity.
+  }
+  let headP = new Int32Array(1);
+  function rebuildPredHead(){
+    if (headP.length !== gridN) headP = new Int32Array(gridN);
+    headP.fill(-1);
+    for (let i=0;i<pN;i++){
+      const c = cellIndex(px[i], py[i]);
+      nextP[i] = headP[c];
+      headP[c] = i;
+    }
+  }
+
+  function step(dt){
+    ensurePopulations();
+    rebuildGrid();
+
+    // Fill grid with birds and predators
+    head.fill(-1);
+    buildBirdGrid();
+    rebuildPredHead();
+
+    // Precompute squared radii
+    const R = params.percep;
+    const R2 = R*R;
+    const sR = params.sepRad;
+    const sR2 = sR*sR;
+
+    const maxV = params.bMaxV;
+    const maxF = params.bMaxF;
+
+    const wAli = params.wAli;
+    const wCoh = params.wCoh;
+    const wSep = params.wSep;
+
+    const fear = params.fear;
+    const huntR = params.huntR;
+    const huntR2 = huntR*huntR;
+
+    // ===== Birds =====
+    for (let i=0;i<bN;i++){
+      const x = bx[i], y = by[i];
+
+      // Neighbor aggregates
+      let count = 0;
+      let ax = 0, ay = 0;     // alignment
+      let cx = 0, cy = 0;     // cohesion
+      let sx = 0, sy = 0;     // separation
+
+      // Predator fear
+      let fx = 0, fy = 0;
+
+      forNeighborCells(x,y,(cell)=>{
+        // Birds
+        for (let j=head[cell]; j!==-1; j=nextB[j]){
+          if (j===i) continue;
+          const dx = bx[j]-x;
+          const dy = by[j]-y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 > R2) continue;
+
+          count++;
+          ax += bvx[j];
+          ay += bvy[j];
+          cx += bx[j];
+          cy += by[j];
+
+          if (d2 < sR2){
+            // Stronger when closer
+            const inv = 1.0 / (Math.sqrt(d2) + 0.0001);
+            sx -= dx * inv;
+            sy -= dy * inv;
+          }
+        }
+
+        // Predators (fear)
+        for (let pj=headP[cell]; pj!==-1; pj=nextP[pj]){
+          const dx = px[pj]-x;
+          const dy = py[pj]-y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 > huntR2) continue;
+          const inv = 1.0 / (Math.sqrt(d2) + 0.001);
+          fx -= dx * inv;
+          fy -= dy * inv;
+        }
+      });
+
+      let steerX = 0, steerY = 0;
+
+      if (count > 0){
+        // Alignment: match average velocity
+        ax /= count; ay /= count;
+        let [lax, lay] = limitVec(ax, ay, maxV);
+        lax -= bvx[i]; lay -= bvy[i];
+        [lax, lay] = limitVec(lax, lay, maxF);
+        steerX += lax * wAli;
+        steerY += lay * wAli;
+
+        // Cohesion: toward average position
+        cx /= count; cy /= count;
+        let tx = (cx - x);
+        let ty = (cy - y);
+        [tx, ty] = limitVec(tx, ty, maxV);
+        tx -= bvx[i]; ty -= bvy[i];
+        [tx, ty] = limitVec(tx, ty, maxF);
+        steerX += tx * wCoh;
+        steerY += ty * wCoh;
+
+        // Separation: away from close neighbors
+        let [ssx, ssy] = limitVec(sx, sy, maxV);
+        ssx -= bvx[i]; ssy -= bvy[i];
+        [ssx, ssy] = limitVec(ssx, ssy, maxF);
+        steerX += ssx * wSep;
+        steerY += ssy * wSep;
+      }
+
+      // Fear from predators
+      if (fx || fy){
+        let [ffx, ffy] = limitVec(fx, fy, maxV);
+        ffx -= bvx[i]; ffy -= bvy[i];
+        [ffx, ffy] = limitVec(ffx, ffy, maxF * 1.8);
+        steerX += ffx * (fear/200);
+        steerY += ffy * (fear/200);
+      }
+
+      // Mouse field (attract/repel)
+      if (mouse.down){
+        const dx = mouse.x - x;
+        const dy = mouse.y - y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < (R*R*16)){
+          const inv = 1.0 / (Math.sqrt(d2) + 40);
+          const s = (mouse.repel ? -1 : 1) * maxF * 3.0;
+          steerX += dx * inv * s;
+          steerY += dy * inv * s;
+        }
+      }
+
+      // Integrate
+      let vx = bvx[i] + steerX * dt;
+      let vy = bvy[i] + steerY * dt;
+
+      // Limit speed
+      const sp2 = vx*vx + vy*vy;
+      if (sp2 > maxV*maxV){
+        const inv = maxV / Math.sqrt(sp2);
+        vx *= inv; vy *= inv;
+      }
+
+      let nx = x + vx * dt;
+      let ny = y + vy * dt;
+
+      // Bounds
+      [nx, ny, vx, vy] = applyBounds(nx, ny, vx, vy, maxV);
+
+      bx[i] = nx; by[i] = ny;
+      bvx[i] = vx; bvy[i] = vy;
+    }
+
+    // ===== Predators =====
+    const pMaxV = params.pMaxV;
+    const pMaxF = params.pMaxF;
+    const killD2 = params.killD * params.killD;
+    const pSep = params.pSep;
+
+    // We do predator target selection via local cells, chase nearest bird within huntR, wander otherwise.
+    // Also predator separation (avoid predator clumping).
+    for (let i=0;i<pN;i++){
+      const x = px[i], y = py[i];
+
+      // Find nearest bird in radius
+      let bestJ = -1;
+      let bestD2 = 1e30;
+
+      // Predator separation
+      let psx = 0, psy = 0;
+
+      forNeighborCells(x,y,(cell)=>{
+        for (let j=head[cell]; j!==-1; j=nextB[j]){
+          const dx = bx[j]-x;
+          const dy = by[j]-y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < bestD2 && d2 <= huntR2){
+            bestD2 = d2;
+            bestJ = j;
+          }
+        }
+        for (let pj=headP[cell]; pj!==-1; pj=nextP[pj]){
+          if (pj===i) continue;
+          const dx = px[pj]-x;
+          const dy = py[pj]-y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < (params.percep*params.percep)){
+            const inv = 1.0 / (Math.sqrt(d2) + 0.01);
+            psx -= dx * inv;
+            psy -= dy * inv;
+          }
+        }
+      });
+
+      // Base steering
+      let steerX = 0, steerY = 0;
+
+      if (bestJ !== -1){
+        // Chase target
+        let tx = bx[bestJ] - x;
+        let ty = by[bestJ] - y;
+
+        // Slight lead (use prey velocity)
+        tx += bvx[bestJ] * 0.12;
+        ty += bvy[bestJ] * 0.12;
+
+        let [dvx, dvy] = limitVec(tx, ty, pMaxV);
+        dvx -= pvx[i]; dvy -= pvy[i];
+        [dvx, dvy] = limitVec(dvx, dvy, pMaxF);
+        steerX += dvx * 1.15;
+        steerY += dvy * 1.15;
+
+        // Kill (remove bird) if close + cooldown allows
+        pCooldown[i] -= dt;
+        if (bestD2 <= killD2 && pCooldown[i] <= 0){
+          // remove bird by swap-with-last (O(1))
+          const last = bN - 1;
+          if (bestJ !== last){
+            bx[bestJ] = bx[last]; by[bestJ] = by[last];
+            bvx[bestJ] = bvx[last]; bvy[bestJ] = bvy[last];
+          }
+          bN = Math.max(0, bN - 1);
+
+          // shrink arrays logically (keep buffers; neighbor pass uses bN)
+          // NOTE: UI "Birds (live)" becomes bN; if you want fixed population, increase birdsN.
+          pCooldown[i] = 0.45 + Math.random()*0.25;
+        }
+      } else {
+        // Wander (curvy)
+        const t = performance.now() * 0.001;
+        const a = t*0.7 + i*2.1;
+        steerX += Math.cos(a) * pMaxF * 0.35;
+        steerY += Math.sin(a*1.13) * pMaxF * 0.35;
+      }
+
+      // Predator separation
+      if (psx || psy){
+        let [svx, svy] = limitVec(psx, psy, pMaxV);
+        svx -= pvx[i]; svy -= pvy[i];
+        [svx, svy] = limitVec(svx, svy, pMaxF);
+        steerX += svx * (pSep/220);
+        steerY += svy * (pSep/220);
+      }
+
+      // Integrate
+      let vx = pvx[i] + steerX * dt;
+      let vy = pvy[i] + steerY * dt;
+
+      const sp2 = vx*vx + vy*vy;
+      if (sp2 > pMaxV*pMaxV){
+        const inv = pMaxV / Math.sqrt(sp2);
+        vx *= inv; vy *= inv;
+      }
+
+      let nx = x + vx * dt;
+      let ny = y + vy * dt;
+      [nx, ny, vx, vy] = applyBounds(nx, ny, vx, vy, pMaxV);
+
+      px[i]=nx; py[i]=ny; pvx[i]=vx; pvy[i]=vy;
+    }
+  }
+
+  // ===== Render =====
+  function hsvToRgb(h,s,v){
+    // h in [0,1)
+    const i = (h*6)|0;
+    const f = h*6 - i;
+    const p = v*(1-s);
+    const q = v*(1-f*s);
+    const t = v*(1-(1-f)*s);
+    let r,g,b;
+    switch (i%6){
+      case 0: r=v; g=t; b=p; break;
+      case 1: r=q; g=v; b=p; break;
+      case 2: r=p; g=v; b=t; break;
+      case 3: r=p; g=q; b=v; break;
+      case 4: r=t; g=p; b=v; break;
+      case 5: r=v; g=p; b=q; break;
+    }
+    return [(r*255)|0,(g*255)|0,(b*255)|0];
+  }
+
+  function colorForBird(i){
+    const vx = bvx[i], vy = bvy[i];
+    const sp = Math.sqrt(vx*vx + vy*vy);
+    if (params.colorMode === 'mono'){
+      return `rgba(124,247,255,0.92)`;
+    }
+    if (params.colorMode === 'heading'){
+      let a = Math.atan2(vy, vx); // -pi..pi
+      let h = (a / TAU + 1) % 1;
+      const [r,g,b] = hsvToRgb(h, 0.95, 1.0);
+      return `rgba(${r},${g},${b},0.92)`;
+    }
+    // speed neon
+    const t = clamp(sp / params.bMaxV, 0, 1);
+    // teal->violet->hot pink
+    const h = 0.52 - t*0.20; // shift hue slightly
+    const [r,g,b] = hsvToRgb((h+1)%1, 0.95, 0.9 + 0.1*t);
+    return `rgba(${r},${g},${b},0.92)`;
+  }
+
+  function drawBird(x,y,vx,vy, size, color){
+    const a = Math.atan2(vy, vx);
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(a);
+
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+
+    const s = size;
+    if (params.shape === 'dot'){
+      ctx.beginPath();
+      ctx.arc(0,0, s*0.55, 0, TAU);
+      ctx.fill();
+    } else if (params.shape === 'chev'){
+      ctx.beginPath();
+      ctx.moveTo(s*1.1, 0);
+      ctx.lineTo(-s*0.9, -s*0.55);
+      ctx.lineTo(-s*0.35, 0);
+      ctx.lineTo(-s*0.9, s*0.55);
+      ctx.closePath();
+      ctx.fill();
+    } else if (params.shape === 'kite'){
+      ctx.beginPath();
+      ctx.moveTo(s*1.2, 0);
+      ctx.lineTo(0, -s*0.65);
+      ctx.lineTo(-s*0.9, 0);
+      ctx.lineTo(0, s*0.65);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // triangle
+      ctx.beginPath();
+      ctx.moveTo(s*1.35, 0);
+      ctx.lineTo(-s*0.9, -s*0.65);
+      ctx.lineTo(-s*0.6, 0);
+      ctx.lineTo(-s*0.9, s*0.65);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawPredator(x,y,vx,vy){
+    const a = Math.atan2(vy, vx);
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(a);
+    const s = Math.max(10, params.bSize*1.8);
+
+    // Predator is a meaner shape with a core + outline
+    ctx.fillStyle = 'rgba(255,124,156,0.92)';
+    ctx.beginPath();
+    ctx.moveTo(s*1.6, 0);
+    ctx.lineTo(-s*0.9, -s*0.85);
+    ctx.lineTo(-s*0.4, 0);
+    ctx.lineTo(-s*0.9, s*0.85);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,200,220,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function render(){
+    // Background fade / motion blur
+    if (params.motionBlur){
+      const a = 0.08 + (1 - params.bgFade) * 0.22; // fade alpha
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = `rgba(7,9,18,${a})`;
+      ctx.fillRect(0,0,W,H);
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = `rgba(7,9,18,1)`;
+      ctx.fillRect(0,0,W,H);
+    }
+
+    // Trails look best with additive blending
+    ctx.globalCompositeOperation = params.additiveGlow ? 'lighter' : 'source-over';
+
+    // A subtle vignette-ish overlay (cheap)
+    if (!params.motionBlur){
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // Optional debug grid
+    if (params.debugGrid){
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      for (let x=0; x<W; x+=cellSize){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+      for (let y=0; y<H; y+=cellSize){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+      ctx.globalCompositeOperation = params.additiveGlow ? 'lighter' : 'source-over';
+    }
+
+    // Glow pass (cheap: draw birds once larger & translucent)
+    if (params.additiveGlow && params.glowAmt > 0.001){
+      const g = clamp(params.glowAmt, 0, 2);
+      const glowSize = params.bSize * (1.8 + g*1.6);
+      ctx.globalAlpha = 0.20 + 0.20*g;
+      for (let i=0;i<bN;i++){
+        const c = colorForBird(i).replace('0.92', String(0.18 + 0.18*g));
+        drawBird(bx[i], by[i], bvx[i], bvy[i], glowSize, c);
+      }
+      // predators glow
+      ctx.globalAlpha = 0.30;
+      for (let i=0;i<pN;i++){
+        drawPredator(px[i], py[i], pvx[i], pvy[i]);
+      }
+      ctx.globalAlpha = 1.0;
+    }
+
+    // Main pass
+    ctx.globalAlpha = 1.0;
+    const size = params.bSize;
+    for (let i=0;i<bN;i++){
+      drawBird(bx[i], by[i], bvx[i], bvy[i], size, colorForBird(i));
+    }
+    for (let i=0;i<pN;i++){
+      drawPredator(px[i], py[i], pvx[i], pvy[i]);
+    }
+
+    // Add a crisp top-layer if additive is on (keeps definition)
+    if (params.additiveGlow){
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 0.35;
+      for (let i=0;i<pN;i++){
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.beginPath();
+        ctx.arc(px[i], py[i], 2.2, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1.0;
+    }
+  }
+
+  // ===== FPS meter =====
+  let lastT = performance.now();
+  let fpsAcc = 0, fpsCnt = 0, fpsLast = performance.now();
+
+  function loop(now){
+    const rawDt = Math.min(0.045, Math.max(0.001, (now - lastT) / 1000));
+    lastT = now;
+
+    // speed scaling + stability
+    const dt = rawDt * (params.speed * 1.0);
+
+    if (!params.paused){
+      // Substeps help stability at high speed (still bounded for capacity)
+      const sub = (params.speed > 1.7) ? 2 : 1;
+      const sdt = dt / sub;
+      for (let k=0;k<sub;k++) step(sdt);
+    }
+
+    render();
+
+    // HUD
+    fpsAcc += 1/rawDt; fpsCnt++;
+    if (now - fpsLast > 300){
+      el.fps.textContent = (fpsAcc / fpsCnt).toFixed(0);
+      fpsAcc = 0; fpsCnt = 0; fpsLast = now;
+      el.birdsLive.textContent = String(bN);
+      el.predLive.textContent = String(pN);
+    }
+
+    // debug: average bird speed (sample up to 200)
+    let avg = 0;
+    const sample = Math.min(bN, 200);
+    if (sample > 0){
+      let ssum = 0;
+      for (let i=0;i<sample;i++){ const v = Math.hypot(bvx[i], bvy[i]); ssum += v; }
+      avg = ssum / sample;
+    }
+    const dbgEl = document.getElementById('debugMsg');
+    if (dbgEl) dbgEl.textContent = 'running — avgSpeed: ' + avg.toFixed(1) + ' px/s | bMaxV=' + params.bMaxV + ' bMaxF=' + params.bMaxF;
+
+    // schedule next frame
+    requestAnimationFrame(loop);
+  }
+
+    requestAnimationFrame(loop);
+    const dbg = document.getElementById('debugMsg');
+    if (dbg) dbg.textContent = 'starting...';
+
+  } catch (err) {
+    console.error(err);
+    const dbg = document.getElementById('debugMsg');
+    if (dbg) dbg.textContent = 'Error: ' + (err && err.message || String(err));
+  }
+
+})();
+</script>
+</body>
+</html>
