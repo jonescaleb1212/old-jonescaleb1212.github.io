@@ -1,0 +1,755 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Conway's Game of Life (Fast + Beautiful + Toolbar)</title>
+  <style>
+    :root{
+      --bg:#070912;
+      --panel: rgba(15,18,28,.72);
+      --panel2: rgba(15,18,28,.50);
+      --stroke: rgba(255,255,255,.12);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.66);
+      --accent: #7cf7ff;
+      --warn: #ff7c9c;
+      --good: #9dff7c;
+    }
+    html,body{height:100%; margin:0; background:var(--bg); overflow:hidden; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
+    canvas{display:block; width:100vw; height:100vh;}
+    #ui{
+      position: fixed; top: 12px; left: 12px; right: 12px;
+      display:flex; gap:12px; align-items:flex-start; pointer-events:none;
+      z-index:10;
+    }
+    .panel{
+      pointer-events:auto;
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: var(--text);
+      overflow:hidden;
+    }
+    .panel header{
+      padding: 10px 12px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0));
+      border-bottom: 1px solid var(--stroke);
+    }
+    .title{font-weight:700; letter-spacing:.2px; font-size:13px; display:flex; align-items:center; gap:8px;}
+    .chip{
+      font-size:11px; color:var(--muted);
+      border:1px solid var(--stroke);
+      background: rgba(255,255,255,.04);
+      padding: 2px 8px; border-radius: 999px;
+    }
+    .content{padding: 10px 12px; display:grid; gap:10px;}
+    .row{display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;}
+    label{font-size:11px; color:var(--muted); user-select:none;}
+    input[type="range"]{width: 200px; accent-color: var(--accent);}
+    input[type="number"]{width: 90px; padding:6px 8px; border-radius:10px; border:1px solid var(--stroke); background: rgba(255,255,255,.04); color:var(--text);}
+    select{
+      width: 210px; padding:6px 8px; border-radius:10px;
+      border:1px solid var(--stroke);
+      background: #ffffff; color: #000000;
+      -webkit-appearance: none; -moz-appearance: none; appearance: none;
+    }
+    /* Force dropdown contrast: black text on white background */
+    select option { color: #000000; background: #ffffff; }
+    select::-ms-expand{ display: none; }
+    .btns{display:flex; gap:8px; flex-wrap:wrap;}
+    button{
+      cursor:pointer;
+      border-radius: 12px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+      padding: 7px 10px;
+      font-weight: 650;
+      font-size: 12px;
+      transition: transform .06s ease, background .12s ease;
+    }
+    button:hover{background: rgba(255,255,255,.09);}
+    button:active{transform: translateY(1px);}
+    .wide{min-width: 98px;}
+    .danger{border-color: rgba(255,124,156,.35); background: rgba(255,124,156,.10);}
+    .good{border-color: rgba(157,255,124,.28); background: rgba(157,255,124,.10);}
+    .toggleRow{display:flex; gap:10px; align-items:center; justify-content:space-between;}
+    .toggle{display:flex; align-items:center; gap:8px; user-select:none; font-size:11px; color:var(--muted);}
+    .toggle input{accent-color: var(--accent);}
+    .kv{font-size:11px; color:var(--muted); display:flex; justify-content:space-between; gap:10px;}
+    .kv b{color:var(--text);}
+    .hint{
+      font-size:11px; color:var(--muted);
+      line-height:1.25;
+      padding: 10px 12px;
+      background: var(--panel2);
+      border-top:1px solid var(--stroke);
+    }
+
+    /* Hide panels but keep a restore button visible */
+    #ui.hidden #leftCol,
+    #ui.hidden #rightCol { display:none; }
+
+    #showBar{
+      pointer-events:auto;
+      display:none;
+      background: rgba(15,18,28,.72);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 14px;
+      padding: 8px 10px;
+      color: rgba(255,255,255,.9);
+      font-size: 12px;
+      user-select:none;
+      cursor:pointer;
+    }
+    #ui.hidden #showBar{ display:inline-block; }
+
+    #leftCol{width: 360px; max-width: calc(100vw - 24px);}
+    #rightCol{margin-left:auto; width: 330px; max-width: calc(100vw - 24px);}
+
+    @media (max-width: 860px){
+      #ui{flex-direction:column;}
+      #rightCol{margin-left:0; width: 360px;}
+      input[type="range"]{width: 180px;}
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div id="showBar">Show toolbars</div>
+
+  <div id="leftCol" class="panel">
+    <header>
+      <div class="title">Conway’s Game of Life</div>
+      <div class="btns">
+        <button id="playBtn" class="wide">Pause</button>
+        <button id="stepBtn" class="wide">Step</button>
+        <button id="clearBtn" class="wide danger">Clear</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="row">
+        <label>Cell size (px)</label>
+        <input id="cellSize" type="range" min="2" max="20" value="6">
+      </div>
+
+      <div class="row">
+        <label>Speed (steps/sec)</label>
+        <input id="sps" type="range" min="1" max="240" value="60">
+      </div>
+
+      <div class="row">
+        <label>Brush size (cells)</label>
+        <input id="brush" type="range" min="1" max="20" value="2">
+      </div>
+
+      <div class="row">
+        <label>Random fill (%)</label>
+        <input id="density" type="range" min="0" max="100" value="20">
+      </div>
+
+      <div class="toggleRow">
+        <div class="toggle"><span>Wrap edges</span> <input id="wrap" type="checkbox" checked></div>
+      </div>
+
+      <div class="toggleRow">
+        <div class="toggle"><span>Trails / fade</span> <input id="trails" type="checkbox" checked></div>
+        <div class="toggle"><span>Hide toolbars</span> <input id="hideUI" type="checkbox"></div>
+      </div>
+
+      <div class="row">
+        <label>Pattern</label>
+        <select id="pattern">
+          <option value="random" selected>Random</option>
+          <option value="glider">Glider</option>
+          <option value="lwss">Lightweight spaceship</option>
+          <option value="pulsar">Pulsar</option>
+          <option value="gosper">Gosper glider gun</option>
+          <option value="spiral">Spiral</option>
+          <option value="star">Star</option>
+        </select>
+      </div>
+
+      <div class="btns">
+        <button id="seedBtn" class="good wide">Seed pattern</button>
+        <button id="randBtn" class="wide">Randomize</button>
+        <button id="pngBtn" class="wide">PNG</button>
+      </div>
+    </div>
+
+    <div class="hint">
+      <div class="kv"><span>Controls</span><b>Paint = LMB, Erase = RMB</b></div>
+      <div>Space = pause/resume • Enter = step • R = randomize • C = clear • H = hide UI</div>
+    </div>
+  </div>
+
+  <div id="rightCol" class="panel">
+    <header>
+      <div class="title">Visuals <span class="chip">neon</span></div>
+      <div class="btns">
+        <button id="invertBtn" class="wide">Invert</button>
+        <button id="zoomFitBtn" class="wide">Fit</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="row">
+        <label>Glow strength</label>
+        <input id="glow" type="range" min="0" max="200" value="60">
+      </div>
+      <div class="row">
+        <label>Fade amount</label>
+        <input id="fade" type="range" min="0" max="100" value="25">
+      </div>
+      <div class="row">
+        <label>Alive color mode</label>
+        <select id="colorMode">
+          <option value="age" selected>By age</option>
+          <option value="solid">Solid</option>
+          <option value="rainbow">Rainbow (position)</option>
+          <option value="heat">Heat (age → hot)</option>
+          <option value="checker">Checker (two-tone)</option>
+          <option value="mono">Monochrome</option>
+        </select>
+      </div>
+
+      <div class="kv"><span>FPS</span><b id="fps">—</b></div>
+      <div class="kv"><span>Alive</span><b id="alive">—</b></div>
+      <div class="kv"><span>Grid</span><b id="dims">—</b></div>
+    </div>
+
+    <div class="hint">
+      <div class="tiny">
+        Uses a double-buffered bit-grid + neighbor sums. Painting is instant, zoom is simple, performance stays strong.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ===== Canvas context (safe fallback) =====
+  const canvas = document.getElementById('c');
+  let ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  if (!ctx) ctx = canvas.getContext('2d', { alpha: false });
+  if (!ctx) ctx = canvas.getContext('2d');
+  if (!ctx) { alert("No Canvas 2D context available."); throw new Error("No canvas 2D context"); }
+
+  let W=0,H=0,DPR=1;
+  function resize(){
+    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    W = window.innerWidth|0;
+    H = window.innerHeight|0;
+    canvas.width  = (W*DPR)|0;
+    canvas.height = (H*DPR)|0;
+    canvas.style.width = W+"px";
+    canvas.style.height = H+"px";
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize, { passive:true });
+  resize();
+
+  // ===== UI =====
+  const UI = id => document.getElementById(id);
+  const el = {
+    ui: UI('ui'),
+    showBar: UI('showBar'),
+
+    playBtn: UI('playBtn'),
+    stepBtn: UI('stepBtn'),
+    clearBtn: UI('clearBtn'),
+    cellSize: UI('cellSize'),
+    sps: UI('sps'),
+    brush: UI('brush'),
+    density: UI('density'),
+    wrap: UI('wrap'),
+    
+    trails: UI('trails'),
+    hideUI: UI('hideUI'),
+    pattern: UI('pattern'),
+    seedBtn: UI('seedBtn'),
+    randBtn: UI('randBtn'),
+    pngBtn: UI('pngBtn'),
+
+    invertBtn: UI('invertBtn'),
+    zoomFitBtn: UI('zoomFitBtn'),
+    glow: UI('glow'),
+    fade: UI('fade'),
+    colorMode: UI('colorMode'),
+
+    fps: UI('fps'),
+    alive: UI('alive'),
+    dims: UI('dims'),
+  };
+
+  const params = {
+    paused: false,
+    cellSize: 6,
+    sps: 60,
+    brush: 2,
+    density: 0.20,
+    wrap: true,
+    
+    trails: true,
+    invert: false,
+    glow: 0.60,
+    fade: 0.25,
+    colorMode: 'age',
+  };
+
+  function syncFromUI(){
+    params.cellSize = +el.cellSize.value;
+    params.sps = +el.sps.value;
+    params.brush = +el.brush.value;
+    params.density = (+el.density.value)/100;
+    params.wrap = el.wrap.checked;
+    
+    params.trails = el.trails.checked;
+    params.glow = (+el.glow.value)/100;
+    params.fade = (+el.fade.value)/100;
+    params.colorMode = el.colorMode.value;
+
+    // hide panels but keep restore strip
+    if (el.ui) el.ui.classList.toggle('hidden', el.hideUI.checked);
+  }
+
+  [
+    'cellSize','sps','brush','density','wrap','trails','hideUI','glow','fade','colorMode'
+  ].forEach(id => {
+    const node = UI(id);
+    if (!node) return;
+    node.addEventListener('input', syncFromUI, { passive:true });
+    node.addEventListener('change', syncFromUI, { passive:true });
+  });
+  syncFromUI();
+
+  el.showBar.addEventListener('click', () => {
+    el.hideUI.checked = false;
+    syncFromUI();
+  });
+
+  // ===== Grid state =====
+  // We store alive in Uint8Array (0/1), and age in Uint16Array for coloring
+  let cols=0, rows=0, N=0;
+  let a = new Uint8Array(0);    // current alive
+  let b = new Uint8Array(0);    // next alive
+  let age = new Uint16Array(0); // age of alive cells
+  let offX=0, offY=0;           // camera offset (simple pan)
+  let zoom=1;                   // extra zoom factor (simple)
+
+  function rebuildGrid(){
+    const cs = Math.max(2, params.cellSize) * zoom;
+    cols = Math.max(1, Math.floor(W / cs));
+    rows = Math.max(1, Math.floor(H / cs));
+    N = cols*rows;
+    a = new Uint8Array(N);
+    b = new Uint8Array(N);
+    age = new Uint16Array(N);
+    el.dims.textContent = `${cols}×${rows}`;
+  }
+
+  function fit(){
+    zoom = 1;
+    offX = 0; offY = 0;
+    rebuildGrid();
+    clear();
+    randomize();
+  }
+
+  function clear(){
+    a.fill(0); b.fill(0); age.fill(0);
+  }
+
+  function idx(x,y){ return y*cols + x; }
+
+  function get(x,y){
+    if (params.wrap){
+      x = (x%cols + cols) % cols;
+      y = (y%rows + rows) % rows;
+      return a[idx(x,y)];
+    } else {
+      if (x<0||y<0||x>=cols||y>=rows) return 0;
+      return a[idx(x,y)];
+    }
+  }
+
+  function setCell(x,y,val){
+    if (x<0||y<0||x>=cols||y>=rows) return;
+    const i = idx(x,y);
+    a[i] = val ? 1 : 0;
+    if (!val) age[i] = 0;
+  }
+
+  function randomize(){
+    const p = params.density;
+    for (let i=0;i<N;i++){
+      const v = Math.random() < p ? 1 : 0;
+      a[i]=v;
+      age[i]= v ? 1 : 0;
+    }
+  }
+
+  function stamp(pattern, ox, oy){
+    // pattern = array of [x,y]
+    for (const [dx,dy] of pattern) setCell(ox+dx, oy+dy, 1);
+  }
+
+  const PATTERNS = {
+    glider: [[1,0],[2,1],[0,2],[1,2],[2,2]],
+    lwss: [[1,0],[4,0],[0,1],[0,2],[4,2],[0,3],[1,3],[2,3],[3,3]],
+    pulsar: (()=>{
+      const pts=[];
+      const add = (x,y)=>pts.push([x,y]);
+      const bars = [-6,-5,-4, -1,0,1, 4,5,6];
+      for (const x of [-4,-3,-2, 2,3,4]) { add(x,-6); add(x,-1); add(x,1); add(x,6); }
+      for (const y of [-4,-3,-2, 2,3,4]) { add(-6,y); add(-1,y); add(1,y); add(6,y); }
+      // "pulsar-ish" compact version
+      const p2=[];
+      const base=[
+        [2,0],[3,0],[4,0],[0,2],[0,3],[0,4],[-2,0],[-3,0],[-4,0],[0,-2],[0,-3],[0,-4],
+        [2,5],[3,5],[4,5],[5,2],[5,3],[5,4],[-2,5],[-3,5],[-4,5],[-5,2],[-5,3],[-5,4],
+        [2,-5],[3,-5],[4,-5],[5,-2],[5,-3],[5,-4],[-2,-5],[-3,-5],[-4,-5],[-5,-2],[-5,-3],[-5,-4]
+      ];
+      return base;
+    })(),
+    gosper: (()=>{
+      // Gosper glider gun (standard)
+      const pts = [];
+      const add=(x,y)=>pts.push([x,y]);
+      const data = [
+        [0,4],[1,4],[0,5],[1,5],
+        [10,4],[10,5],[10,6],[11,3],[11,7],[12,2],[12,8],[13,2],[13,8],[14,5],[15,3],[15,7],[16,4],[16,5],[16,6],[17,5],
+        [20,2],[20,3],[20,4],[21,2],[21,3],[21,4],[22,1],[22,5],[24,0],[24,1],[24,5],[24,6],
+        [34,2],[34,3],[35,2],[35,3]
+      ];
+      for (const [x,y] of data) add(x,y);
+      return pts;
+    })()
+    ,
+    // Symmetric / generated patterns
+    spiral: (()=>{
+      // Return a function that generates a compact integer-spiral pattern sized to the grid
+      return function genSpiral(){
+        const TAU = Math.PI * 2;
+        const pts = [];
+        const seen = new Set();
+        const maxR = Math.floor(Math.min(cols, rows) * 0.35) || 16;
+        const turns = 6;
+        const steps = Math.max(160, turns * 60);
+        const a = 0.3; // radial offset
+        const b = maxR / (turns * TAU);
+        for (let i=0;i<steps;i++){
+          const t = (i / (steps-1)) * (turns * TAU);
+          const r = a + b * t;
+          const x = Math.round(r * Math.cos(t));
+          const y = Math.round(r * Math.sin(t));
+          const key = x+','+y;
+          if (!seen.has(key)){
+            seen.add(key);
+            pts.push([x,y]);
+          }
+        }
+        return pts;
+      };
+    })(),
+    star: (()=>{
+      // Radial star made of N spokes
+      return function genStar(){
+        const TAU = Math.PI * 2;
+        const pts = [];
+        const seen = new Set();
+        const maxR = Math.floor(Math.min(cols, rows) * 0.38) || 18;
+        const spikes = 7;
+        for (let s=0;s<spikes;s++){
+          const ang = (s / spikes) * TAU;
+          // draw a line from center outward
+          for (let r=1;r<=maxR;r++){
+            const x = Math.round(r * Math.cos(ang));
+            const y = Math.round(r * Math.sin(ang));
+            const key = x+','+y;
+            if (!seen.has(key)){
+              seen.add(key);
+              pts.push([x,y]);
+            }
+          }
+        }
+        // add outer ring to emphasize shape
+        for (let k=0;k<spikes*6;k++){
+          const a = (k/(spikes*6)) * TAU;
+          const x = Math.round((maxR) * Math.cos(a));
+          const y = Math.round((maxR) * Math.sin(a));
+          const key = x+','+y;
+          if (!seen.has(key)) { seen.add(key); pts.push([x,y]); }
+        }
+        return pts;
+      };
+    })()
+  };
+
+  rebuildGrid();
+  randomize();
+
+  // ===== Simulation step =====
+  function step(){
+    // Compute next state into b
+    // Classic Life rules: B3/S23
+    for (let y=0;y<rows;y++){
+      const y0 = y-1, y1 = y+1;
+      for (let x=0;x<cols;x++){
+        const x0 = x-1, x1 = x+1;
+
+        const n =
+          get(x0,y0) + get(x ,y0) + get(x1,y0) +
+          get(x0,y )            + get(x1,y ) +
+          get(x0,y1) + get(x ,y1) + get(x1,y1);
+
+        const i = idx(x,y);
+        const alive = a[i];
+
+        let nv = 0;
+        if (alive){
+          nv = (n===2 || n===3) ? 1 : 0;
+        } else {
+          nv = (n===3) ? 1 : 0;
+        }
+        b[i] = nv;
+
+        // update age buffer (based on next state)
+        if (nv){
+          age[i] = alive ? (age[i] + 1) : 1;
+        } else {
+          age[i] = 0;
+        }
+      }
+    }
+    // swap a/b
+    const tmp = a; a = b; b = tmp;
+  }
+
+  // ===== Render =====
+  function hsvToRgb(h,s,v){
+    const i = (h*6)|0;
+    const f = h*6 - i;
+    const p = v*(1-s), q=v*(1-f*s), t=v*(1-(1-f)*s);
+    let r,g,b;
+    switch (i%6){
+      case 0: r=v; g=t; b=p; break;
+      case 1: r=q; g=v; b=p; break;
+      case 2: r=p; g=v; b=t; break;
+      case 3: r=p; g=q; b=v; break;
+      case 4: r=t; g=p; b=v; break;
+      case 5: r=v; g=p; b=q; break;
+    }
+    return [(r*255)|0,(g*255)|0,(b*255)|0];
+  }
+
+  function colorForCell(x,y,i){
+    if (params.colorMode === 'solid' || params.colorMode === 'mono'){
+      return params.invert ? 'rgba(7,9,18,0.95)' : 'rgba(124,247,255,0.95)';
+    }
+    if (params.colorMode === 'rainbow'){
+      const h = ((x/cols) * 0.75 + (y/rows) * 0.25) % 1;
+      const [r,g,b] = hsvToRgb(h, 0.95, 1.0);
+      return `rgba(${r},${g},${b},0.95)`;
+    }
+    if (params.colorMode === 'heat'){
+      const t = Math.min(1, age[i] / 40);
+      // heat: yellow -> orange -> red
+      const h = 0.12 - t*0.12; // approx yellow->red
+      const [r,g,b] = hsvToRgb((h+1)%1, 0.95, 0.9 + 0.1*t);
+      return `rgba(${r},${g},${b},0.95)`;
+    }
+    if (params.colorMode === 'checker'){
+      const even = ((x+y)&1) === 0;
+      if (params.invert) return even ? 'rgba(7,9,18,0.95)' : 'rgba(255,255,255,0.9)';
+      return even ? 'rgba(124,247,255,0.95)' : 'rgba(140,140,180,0.88)';
+    }
+    // default: age mode
+    const t = Math.min(1, age[i] / 40);
+    const h = 0.55 - t*0.22; // teal->purple
+    const [r,g,b] = hsvToRgb((h+1)%1, 0.95, 0.9 + 0.1*t);
+    return `rgba(${r},${g},${b},0.95)`;
+  }
+
+  function render(){
+    // background
+    if (params.trails){
+      const a = 0.08 + (1-params.fade)*0.28;
+      ctx.fillStyle = params.invert ? `rgba(255,255,255,${a})` : `rgba(7,9,18,${a})`;
+      ctx.fillRect(0,0,W,H);
+    } else {
+      ctx.fillStyle = params.invert ? 'rgba(255,255,255,1)' : 'rgba(7,9,18,1)';
+      ctx.fillRect(0,0,W,H);
+    }
+
+    const cs = Math.max(2, params.cellSize) * zoom;
+    const glow = params.glow;
+
+    // Glow pass
+    if (glow > 0.001){
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.25 + 0.25*glow;
+      for (let y=0;y<rows;y++){
+        const yy = y*cs;
+        for (let x=0;x<cols;x++){
+          const i = idx(x,y);
+          if (!a[i]) continue;
+          ctx.fillStyle = colorForCell(x,y,i).replace('0.95', String(0.22 + 0.22*glow));
+          ctx.fillRect(x*cs - cs*0.10, yy - cs*0.10, cs*1.20, cs*1.20);
+        }
+      }
+      ctx.globalAlpha = 1.0;
+    }
+
+    // Main pass
+    ctx.globalCompositeOperation = 'source-over';
+    for (let y=0;y<rows;y++){
+      const yy = y*cs;
+      for (let x=0;x<cols;x++){
+        const i = idx(x,y);
+        if (!a[i]) continue;
+        ctx.fillStyle = colorForCell(x,y,i);
+        ctx.fillRect(x*cs, yy, cs, cs);
+      }
+    }
+
+    // Optional grid lines
+    if (params.grid && cs >= 6){
+      ctx.strokeStyle = params.invert ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      for (let x=0; x<=cols; x++){
+        const xx = x*cs + 0.5;
+        ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx, rows*cs); ctx.stroke();
+      }
+      for (let y=0; y<=rows; y++){
+        const yy = y*cs + 0.5;
+        ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(cols*cs, yy); ctx.stroke();
+      }
+    }
+  }
+
+  // ===== Painting =====
+  const mouse = {x:0,y:0,down:false,erase:false};
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  window.addEventListener('mousemove', e => { mouse.x=e.clientX; mouse.y=e.clientY; }, { passive:true });
+  window.addEventListener('mousedown', e => { mouse.down=true; mouse.erase=(e.button===2); paint(); }, { passive:true });
+  window.addEventListener('mouseup', () => { mouse.down=false; }, { passive:true });
+
+  function paint(){
+    const cs = Math.max(2, params.cellSize) * zoom;
+    const gx = Math.floor(mouse.x / cs);
+    const gy = Math.floor(mouse.y / cs);
+    const r = params.brush|0;
+    const val = mouse.erase ? 0 : 1;
+    for (let dy=-r; dy<=r; dy++){
+      for (let dx=-r; dx<=r; dx++){
+        if (dx*dx + dy*dy > r*r) continue;
+        setCell(gx+dx, gy+dy, val);
+      }
+    }
+  }
+
+  // continuous paint while dragging
+  function paintLoop(){
+    if (mouse.down) paint();
+    requestAnimationFrame(paintLoop);
+  }
+  requestAnimationFrame(paintLoop);
+
+  // ===== Buttons =====
+  el.playBtn.addEventListener('click', () => {
+    params.paused = !params.paused;
+    el.playBtn.textContent = params.paused ? 'Play' : 'Pause';
+  });
+  el.stepBtn.addEventListener('click', () => { step(); render(); });
+  el.clearBtn.addEventListener('click', () => { clear(); render(); });
+
+  el.randBtn.addEventListener('click', () => { randomize(); render(); });
+  el.seedBtn.addEventListener('click', () => {
+    // Ensure UI values and grid are up-to-date before generating
+    syncFromUI();
+    rebuildGrid();
+    const which = el.pattern.value;
+    if (which === 'random'){ randomize(); render(); return; }
+    clear();
+    let pat = PATTERNS[which] || PATTERNS.glider;
+    // support generator functions (call with current cols/rows)
+    if (typeof pat === 'function') pat = pat(cols, rows) || [];
+    const cx = (cols/2)|0, cy = (rows/2)|0;
+    if (pat && pat.length) stamp(pat, cx, cy);
+    render();
+  });
+
+  el.pngBtn.addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.download = 'life.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  });
+
+  el.invertBtn.addEventListener('click', () => { params.invert = !params.invert; render(); });
+  el.zoomFitBtn.addEventListener('click', () => fit());
+
+  // ===== Keyboard shortcuts =====
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === ' '){ e.preventDefault(); el.playBtn.click(); }
+    else if (k === 'enter'){ e.preventDefault(); el.stepBtn.click(); }
+    else if (k === 'r'){ el.randBtn.click(); }
+    else if (k === 'c'){ el.clearBtn.click(); }
+    else if (k === 'h'){
+      el.hideUI.checked = !el.hideUI.checked;
+      syncFromUI();
+    }
+  });
+
+  // ===== Main loop with fixed-step timing =====
+  let last = performance.now();
+  let acc = 0;
+  let fpsAcc=0,fpsCnt=0,fpsLast=performance.now();
+
+  function loop(now){
+    const dt = Math.min(0.05, Math.max(0.001, (now-last)/1000));
+    last = now;
+
+    const stepDt = 1 / Math.max(1, params.sps);
+    if (!params.paused){
+      acc += dt;
+      // cap steps per frame to avoid spiral of death
+      let steps = 0;
+      while (acc >= stepDt && steps < 6){
+        step();
+        acc -= stepDt;
+        steps++;
+      }
+    }
+
+    render();
+
+    // HUD
+    fpsAcc += 1/dt; fpsCnt++;
+    if (now - fpsLast > 300){
+      el.fps.textContent = (fpsAcc/fpsCnt).toFixed(0);
+      fpsAcc=0; fpsCnt=0; fpsLast=now;
+      let alive=0;
+      for (let i=0;i<N;i++) alive += a[i];
+      el.alive.textContent = String(alive);
+      el.dims.textContent = `${cols}×${rows}`;
+    }
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
