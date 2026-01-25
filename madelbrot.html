@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mandelbrot Flow — Neon Escape Lab</title>
+  <style>
+    :root{
+      --bg:#070912;
+      --panel: rgba(15,18,28,.72);
+      --panel2: rgba(15,18,28,.50);
+      --stroke: rgba(255,255,255,.12);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.66);
+      --accent: #7cf7ff;
+      --warn: #ff7c9c;
+      --good: #9dff7c;
+    }
+    html,body{height:100%; margin:0; background:var(--bg); overflow:hidden; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
+    canvas{display:block; width:100vw; height:100vh;}
+    #ui{
+      position: fixed; top: 12px; left: 12px; right: 12px;
+      display:flex; gap:12px; align-items:flex-start; pointer-events:none;
+      z-index:10;
+    }
+    .panel{
+      pointer-events:auto;
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: var(--text);
+      overflow:hidden;
+    }
+    .panel header{
+      padding: 10px 12px;
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0));
+      border-bottom: 1px solid var(--stroke);
+    }
+    .title{font-weight:800; letter-spacing:.2px; font-size:13px; display:flex; align-items:center; gap:8px;}
+    .chip{
+      font-size:11px; color:var(--muted);
+      border:1px solid var(--stroke);
+      background: rgba(255,255,255,.04);
+      padding: 2px 8px; border-radius: 999px;
+    }
+    .content{padding: 10px 12px; display:grid; gap:10px;}
+    .row{display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;}
+    label{font-size:11px; color:var(--muted); user-select:none;}
+    input[type="range"]{width: 210px; accent-color: var(--accent);}
+    select{
+      width: 220px; padding:6px 8px; border-radius:10px;
+      border:1px solid var(--stroke);
+      background: #ffffff; color: #000000;
+      -webkit-appearance: none; -moz-appearance: none; appearance: none;
+    }
+    select option{ color:#000000; background:#ffffff; }
+    select::-ms-expand{ display:none; }
+    .btns{display:flex; gap:8px; flex-wrap:wrap;}
+    button{
+      cursor:pointer;
+      border-radius: 12px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+      padding: 7px 10px;
+      font-weight: 750;
+      font-size: 12px;
+      transition: transform .06s ease, background .12s ease;
+    }
+    button:hover{background: rgba(255,255,255,.09);}
+    button:active{transform: translateY(1px);}
+    .wide{min-width: 98px;}
+    .danger{border-color: rgba(255,124,156,.35); background: rgba(255,124,156,.10);}
+    .good{border-color: rgba(157,255,124,.28); background: rgba(157,255,124,.10);}
+    .toggleRow{display:flex; gap:10px; align-items:center; justify-content:space-between;}
+    .toggle{display:flex; align-items:center; gap:8px; user-select:none; font-size:11px; color:var(--muted);}
+    .toggle input{accent-color: var(--accent);}
+    .kv{font-size:11px; color:var(--muted); display:flex; justify-content:space-between; gap:10px;}
+    .kv b{color:var(--text);}
+    .hint{
+      font-size:11px; color:var(--muted);
+      line-height:1.25;
+      padding: 10px 12px;
+      background: var(--panel2);
+      border-top:1px solid var(--stroke);
+    }
+
+    #ui.hidden #leftCol,
+    #ui.hidden #rightCol { display:none; }
+    #showBar{
+      pointer-events:auto;
+      display:none;
+      background: rgba(15,18,28,.72);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 14px;
+      padding: 8px 10px;
+      color: rgba(255,255,255,.9);
+      font-size: 12px;
+      user-select:none;
+      cursor:pointer;
+    }
+    #ui.hidden #showBar{ display:inline-block; }
+
+    #leftCol{width: 380px; max-width: calc(100vw - 24px);}
+    #rightCol{margin-left:auto; width: 340px; max-width: calc(100vw - 24px);}
+
+    @media (max-width: 900px){
+      #ui{flex-direction:column;}
+      #rightCol{margin-left:0; width: 380px;}
+      input[type="range"]{width: 190px;}
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div id="showBar">Show toolbars</div>
+
+  <div id="leftCol" class="panel">
+    <header>
+      <div class="title">Mandelbrot Flow</div>
+      <div class="btns">
+        <button id="pauseBtn" class="wide">Pause</button>
+        <button id="resetBtn" class="wide danger">Reset</button>
+        <button id="burstBtn" class="wide good">Burst</button>
+      </div>
+    </header>
+    <div class="content">
+      <div class="row">
+        <label>Simulation speed</label>
+        <input id="speed" type="range" min="0" max="300" value="90">
+      </div>
+
+      <div class="row">
+        <label>Step size</label>
+        <input id="step" type="range" min="1" max="80" value="50">
+      </div>
+
+      <div class="row">
+        <label>Particles</label>
+        <input id="n" type="range" min="1" max="30000" value="20000">
+      </div>
+
+      <div class="row">
+        <label>Iterations (escape)</label>
+        <input id="iters" type="range" min="8" max="220" value="80">
+      </div>
+
+      <div class="row">
+        <label>Bailout radius</label>
+        <input id="bail" type="range" min="12" max="200" value="80">
+      </div>
+
+      <div class="toggleRow">
+        <div class="toggle"><span>Stabilize (reseed out-of-bounds)</span> <input id="stabilize" type="checkbox" checked></div>
+        <div class="toggle"><span>Hide toolbars</span> <input id="hideUI" type="checkbox"></div>
+      </div>
+
+      <div class="btns">
+        <button id="pngBtn" class="wide">PNG</button>
+        <button id="seedBtn" class="wide">Reseed</button>
+      </div>
+    </div>
+    <div class="hint">
+      <div class="kv"><span>Controls</span><b>Drag = pan • Wheel = zoom</b></div>
+      <div>Space = pause • R = reset • B = burst • H = hide UI</div>
+    </div>
+  </div>
+
+  <div id="rightCol" class="panel">
+    <header>
+      <div class="title">Look <span class="chip">glow</span></div>
+      <div class="btns">
+        <button id="invertBtn" class="wide">Invert</button>
+        <button id="fitBtn" class="wide">Fit</button>
+      </div>
+    </header>
+    <div class="content">
+      <div class="row">
+        <label>Point size</label>
+        <input id="pt" type="range" min="1" max="12" value="2">
+      </div>
+
+      <div class="row">
+        <label>Glow</label>
+        <input id="glow" type="range" min="0" max="200" value="20">
+      </div>
+
+      <div class="row">
+        <label>Fade (trail persistence)</label>
+        <input id="fade" type="range" min="0" max="100" value="75">
+      </div>
+
+      <div class="row">
+        <label>Color mode</label>
+        <select id="color">
+          <option value="escape" selected>Escape time (neon)</option>
+          <option value="dist">Distance estimator</option>
+          <option value="age">Age</option>
+          <option value="mono">Monochrome</option>
+        </select>
+      </div>
+
+      <div class="toggleRow">
+        <div class="toggle"><span>Additive</span> <input id="add" type="checkbox" unchecked></div>
+        <div class="toggle"><span>Motion blur</span> <input id="blur" type="checkbox" checked></div>
+      </div>
+
+      <div class="kv"><span>FPS</span><b id="fps">—</b></div>
+      <div class="kv"><span>Particles</span><b id="live">—</b></div>
+      <div class="kv"><span>Center</span><b id="center">—</b></div>
+      <div class="kv"><span>Zoom</span><b id="zoom">—</b></div>
+    </div>
+    <div class="hint">
+      Mandelbrot: z₀=0, zₙ₊₁ = zₙ² + c. We use smooth escape-time + distance estimate to drive a flow field.
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  let ctx = canvas.getContext('2d', { alpha:false, desynchronized:true });
+  if (!ctx) ctx = canvas.getContext('2d', { alpha:false });
+  if (!ctx) ctx = canvas.getContext('2d');
+  if (!ctx){ alert("No Canvas 2D context available."); throw new Error("No canvas 2D context"); }
+
+  let W=0,H=0,DPR=1;
+  function resize(){
+    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    W = window.innerWidth|0;
+    H = window.innerHeight|0;
+    canvas.width  = (W*DPR)|0;
+    canvas.height = (H*DPR)|0;
+    canvas.style.width = W+"px";
+    canvas.style.height = H+"px";
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize, { passive:true });
+  resize();
+
+  const UI = id => document.getElementById(id);
+  const el = {
+    ui: UI('ui'),
+    showBar: UI('showBar'),
+    pauseBtn: UI('pauseBtn'),
+    resetBtn: UI('resetBtn'),
+    burstBtn: UI('burstBtn'),
+    pngBtn: UI('pngBtn'),
+    seedBtn: UI('seedBtn'),
+    invertBtn: UI('invertBtn'),
+    fitBtn: UI('fitBtn'),
+
+    speed: UI('speed'),
+    step: UI('step'),
+    n: UI('n'),
+    iters: UI('iters'),
+    bail: UI('bail'),
+    stabilize: UI('stabilize'),
+    hideUI: UI('hideUI'),
+
+    pt: UI('pt'),
+    glow: UI('glow'),
+    fade: UI('fade'),
+    color: UI('color'),
+    add: UI('add'),
+    blur: UI('blur'),
+
+    fps: UI('fps'),
+    live: UI('live'),
+    center: UI('center'),
+    zoom: UI('zoom'),
+  };
+
+  const params = {
+    paused:false,
+    speed: 1.40,
+    step: 0.018,
+
+    n: 12000,
+    iters: 80,
+    bailout: 4.0,
+    stabilize: true,
+
+    pt: 1,
+    glow: 0.20,
+    fade: 1.0,
+    color: 'escape',
+    additive: true,
+    motionBlur: true,
+    invert: false,
+  };
+
+  // View (complex plane)
+  const view = {
+    cx: -0.7436438870371587,
+    cy:  0.13182590420531197,
+    scale: 8, // width in complex plane
+  };
+  function fitView(){
+    view.cx = -0.7436438870371587;
+    view.cy =  0.13182590420531197;
+    view.scale = 8;
+  }
+  fitView();
+
+  function syncFromUI(){
+    params.speed = (+el.speed.value)/100;
+    params.step  = (+el.step.value)/1000;
+
+    params.n     = (+el.n.value)|0;
+    params.iters = (+el.iters.value)|0;
+
+    const br = (+el.bail.value);
+    params.bailout = 2.0 + (br-12) * (10.0 / (200-12)); // 2..12
+    params.stabilize = el.stabilize.checked;
+
+    params.pt    = (+el.pt.value)|0;
+    params.glow  = (+el.glow.value)/100;
+    params.fade  = (+el.fade.value)/100;
+    params.color = el.color.value;
+    params.additive = el.add.checked;
+    params.motionBlur = el.blur.checked;
+
+    if (el.ui) el.ui.classList.toggle('hidden', el.hideUI.checked);
+  }
+
+  [
+    'speed','step','n','iters','bail','stabilize','hideUI',
+    'pt','glow','fade','color','add','blur'
+  ].forEach(id => {
+    const node = UI(id);
+    if (!node) return;
+    node.addEventListener('input', syncFromUI, { passive:true });
+    node.addEventListener('change', syncFromUI, { passive:true });
+  });
+  syncFromUI();
+
+  el.showBar.addEventListener('click', () => {
+    el.hideUI.checked = false;
+    syncFromUI();
+  });
+
+  // Pan/zoom in fractal plane
+  const mouse = {down:false, x:0, y:0, btn:0};
+
+  function screenToComplex(px,py){
+    const aspect = W / Math.max(1,H);
+    const halfW = view.scale * 0.5;
+    const halfH = (view.scale / aspect) * 0.5;
+    const u = (px / W) * 2 - 1;
+    const v = (py / H) * 2 - 1;
+    return [ view.cx + u * halfW, view.cy + v * halfH ];
+  }
+
+    // Pan/zoom in fractal plane
+
+
+    // Only pan when interacting with the canvas
+    canvas.addEventListener('mousedown', (e)=>{
+    mouse.down = true;
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    mouse.btn = e.button;
+    }, { passive:true });
+
+    window.addEventListener('mouseup', ()=>{
+    mouse.down = false;
+    }, { passive:true });
+
+    window.addEventListener('mousemove', (e)=>{
+    if (!mouse.down) return;
+    const dx = e.clientX - mouse.x;
+    const dy = e.clientY - mouse.y;
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+
+    const aspect = W / Math.max(1,H);
+    const halfW = view.scale * 0.5;
+    const halfH = (view.scale / aspect) * 0.5;
+
+    view.cx -= (dx / W) * (2*halfW);
+    view.cy -= (dy / H) * (2*halfH);
+    }, { passive:true });
+
+
+    canvas.addEventListener('wheel', (e)=>{
+    e.preventDefault();
+
+    const zoom = Math.sign(e.deltaY) > 0 ? 1.18 : 0.88;
+
+    const [beforeX, beforeY] = screenToComplex(e.clientX, e.clientY);
+    view.scale *= zoom;
+    view.scale = Math.max(1e-6, Math.min(120.0, view.scale));
+
+    const [afterX, afterY] = screenToComplex(e.clientX, e.clientY);
+    view.cx += (beforeX - afterX);
+    view.cy += (beforeY - afterY);
+    }, { passive:false });
+
+
+  // Particles
+  let N=0;
+  let px = new Float32Array(0), py = new Float32Array(0);
+  let vx = new Float32Array(0), vy = new Float32Array(0);
+  let age = new Uint16Array(0);
+
+  function alloc(){
+    N = Math.max(1, Math.min(30000, params.n|0));
+    px = new Float32Array(N);
+    py = new Float32Array(N);
+    vx = new Float32Array(N);
+    vy = new Float32Array(N);
+    age = new Uint16Array(N);
+    reseed();
+    el.live.textContent = String(N);
+  }
+
+  function reseed(){
+    for (let i=0;i<N;i++){
+      px[i] = Math.random()*W;
+      py[i] = Math.random()*H;
+      vx[i] = (Math.random()*2-1)*0.2;
+      vy[i] = (Math.random()*2-1)*0.2;
+      age[i] = (Math.random()*200)|0;
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = params.invert ? 'rgba(255,255,255,1)' : 'rgba(7,9,18,1)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  function ensureAlloc(){
+    const want = Math.max(1, Math.min(30000, params.n|0));
+    if (want !== N) alloc();
+  }
+
+  alloc();
+
+  // Mandelbrot sampling
+  function mandelSample(cx, cy, maxIter, bailout){
+    let zx=0, zy=0;
+    let dzx=0, dzy=0;
+    let i=0;
+
+    const bail2 = bailout*bailout;
+
+    for (; i<maxIter; i++){
+      const x2 = zx*zx - zy*zy;
+      const y2 = 2*zx*zy;
+
+      const tdx = 2*(zx*dzx - zy*dzy) + 1;
+      const tdy = 2*(zx*dzy + zy*dzx);
+      dzx = tdx; dzy = tdy;
+
+      zx = x2 + cx;
+      zy = y2 + cy;
+
+      if (zx*zx + zy*zy > bail2) break;
+    }
+
+    let smooth = i;
+    const r2 = zx*zx + zy*zy;
+    if (i < maxIter && r2 > 0){
+      const log_zn = Math.log(r2) / 2;
+      const nu = Math.log(log_zn / Math.log(2)) / Math.log(2);
+      smooth = i + 1 - nu;
+    }
+
+    let de = 0;
+    if (i < maxIter){
+      const r = Math.sqrt(r2);
+      const dr = Math.hypot(dzx,dzy) + 1e-12;
+      de = (r * Math.log(r + 1e-12)) / dr;
+    }
+
+    const angle = Math.atan2(zy, zx);
+    return { smooth, de, angle, escaped: (i < maxIter) };
+  }
+
+  function flowAtScreen(x, y){
+    const aspect = W / Math.max(1,H);
+    const halfW = view.scale * 0.5;
+    const halfH = (view.scale / aspect) * 0.5;
+
+    const u = (x / W) * 2 - 1;
+    const v = (y / H) * 2 - 1;
+    const cx = view.cx + u * halfW;
+    const cy = view.cy + v * halfH;
+
+    const maxIter = params.iters|0;
+    const bailout = params.bailout;
+
+    const s0 = mandelSample(cx, cy, maxIter, bailout);
+
+    const eps = Math.max(1e-10, view.scale * 0.0016);
+
+    const sx = mandelSample(cx + eps, cy, maxIter, bailout);
+    const sy = mandelSample(cx, cy + eps, maxIter, bailout);
+
+    const f0 = (s0.de > 0 ? s0.de : s0.smooth);
+    const fx = (sx.de > 0 ? sx.de : sx.smooth);
+    const fy = (sy.de > 0 ? sy.de : sy.smooth);
+
+    let gx = (fx - f0) / eps;
+    let gy = (fy - f0) / eps;
+
+    let vx0 = -gy;
+    let vy0 =  gx;
+
+    const ax = Math.cos(s0.angle);
+    const ay = Math.sin(s0.angle);
+
+    const m = Math.hypot(vx0,vy0) + 1e-9;
+    vx0 /= m; vy0 /= m;
+
+    const gmag = Math.min(1.0, m * 0.08);
+    vx0 = vx0*(0.55 + 0.45*gmag) + ax*(0.45*(1-gmag));
+    vy0 = vy0*(0.55 + 0.45*gmag) + ay*(0.45*(1-gmag));
+
+    const mm = Math.hypot(vx0,vy0) + 1e-9;
+    vx0 /= mm; vy0 /= mm;
+
+    return { vx:vx0, vy:vy0, esc:s0.smooth, de:s0.de, escaped:s0.escaped };
+  }
+
+  function hsvToRgb(h,s,v){
+    const i=(h*6)|0;
+    const f=h*6-i;
+    const p=v*(1-s), q=v*(1-f*s), t=v*(1-(1-f)*s);
+    let r,g,b;
+    switch(i%6){
+      case 0: r=v; g=t; b=p; break;
+      case 1: r=q; g=v; b=p; break;
+      case 2: r=p; g=v; b=t; break;
+      case 3: r=p; g=q; b=v; break;
+      case 4: r=t; g=p; b=v; break;
+      case 5: r=v; g=p; b=q; break;
+    }
+    return [(r*255)|0,(g*255)|0,(b*255)|0];
+  }
+
+  function colorFor(i, sample){
+    if (params.color === 'mono'){
+      return params.invert ? 'rgba(0,0,0,0.9)' : 'rgba(124,247,255,0.9)';
+    }
+    if (params.color === 'age'){
+      const t = Math.min(1, age[i] / 260);
+      const h = 0.56 - t*0.28;
+      const [r,g,b] = hsvToRgb((h+1)%1, 0.95, 1.0);
+      return `rgba(${r},${g},${b},0.9)`;
+    }
+    if (params.color === 'dist'){
+      const d = sample.de > 0 ? sample.de : 0;
+      const t = Math.max(0, Math.min(1, 1.0 - Math.log10(1 + d*30)));
+      const h = 0.62 - t*0.38;
+      const [r,g,b] = hsvToRgb((h+1)%1, 0.95, 1.0);
+      return `rgba(${r},${g},${b},0.9)`;
+    }
+    const t = Math.max(0, Math.min(1, (sample.esc) / Math.max(1, params.iters)));
+    const h = 0.58 - t*0.50;
+    const [r,g,b] = hsvToRgb((h+1)%1, 0.95, 1.0);
+    return `rgba(${r},${g},${b},0.9)`;
+  }
+
+  function clearBackground(){
+    ctx.globalCompositeOperation = 'source-over';
+    if (params.motionBlur){
+      const a = 0.06 + (1-params.fade)*0.24;
+      ctx.fillStyle = params.invert ? `rgba(255,255,255,${a})` : `rgba(7,9,18,${a})`;
+    } else {
+      ctx.fillStyle = params.invert ? 'rgba(255,255,255,1)' : 'rgba(7,9,18,1)';
+    }
+    ctx.fillRect(0,0,W,H);
+  }
+
+  function stabilizeParticle(i){
+    if (!isFinite(px[i]) || !isFinite(py[i]) || px[i]<-50 || px[i]>W+50 || py[i]<-50 || py[i]>H+50){
+      px[i] = Math.random()*W;
+      py[i] = Math.random()*H;
+      vx[i] = (Math.random()*2-1)*0.2;
+      vy[i] = (Math.random()*2-1)*0.2;
+      age[i] = 0;
+      return true;
+    }
+    return false;
+  }
+
+  function draw(samples){
+    clearBackground();
+    ctx.globalCompositeOperation = params.additive ? 'lighter' : 'source-over';
+
+    const g = Math.max(0, Math.min(2, params.glow));
+    const pt = params.pt;
+
+    if (g > 0.001){
+      ctx.globalAlpha = 0.20 + 0.25*g;
+      const sz = pt * (1.6 + g*1.6);
+      for (let i=0;i<N;i++){
+        const s = samples[i];
+        ctx.fillStyle = colorFor(i, s).replace('0.9', String(0.16 + 0.22*g));
+        ctx.fillRect(px[i], py[i], sz, sz);
+      }
+      ctx.globalAlpha = 1.0;
+    }
+
+    ctx.globalAlpha = 0.86;
+    for (let i=0;i<N;i++){
+      const s = samples[i];
+      ctx.fillStyle = colorFor(i, s);
+      ctx.fillRect(px[i], py[i], pt, pt);
+    }
+    ctx.globalAlpha = 1.0;
+  }
+
+  // Buttons
+  el.pauseBtn.addEventListener('click', ()=>{
+    params.paused = !params.paused;
+    el.pauseBtn.textContent = params.paused ? 'Resume' : 'Pause';
+  });
+  el.resetBtn.addEventListener('click', ()=>{ reseed(); fitView(); });
+  el.seedBtn.addEventListener('click', ()=> reseed());
+  el.fitBtn.addEventListener('click', ()=> fitView());
+  el.invertBtn.addEventListener('click', ()=> { params.invert=!params.invert; });
+  el.pngBtn.addEventListener('click', ()=>{
+    const a = document.createElement('a');
+    a.download = 'mandelbrot_flow.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  });
+  el.burstBtn.addEventListener('click', ()=>{
+    view.cx += (Math.random()*2-1) * view.scale * 0.03;
+    view.cy += (Math.random()*2-1) * view.scale * 0.03;
+    view.scale *= (Math.random() < 0.5 ? 0.88 : 1.14);
+    view.scale = Math.max(1e-6, Math.min(120.0, view.scale));
+
+    for (let i=0;i<N;i++){
+      vx[i] += (Math.random()*2-1)*0.8;
+      vy[i] += (Math.random()*2-1)*0.8;
+      age[i] = 0;
+    }
+  });
+
+  // Keyboard
+  window.addEventListener('keydown', (e)=>{
+    const k = e.key.toLowerCase();
+    if (k===' '){ e.preventDefault(); el.pauseBtn.click(); }
+    else if (k==='r'){ el.resetBtn.click(); }
+    else if (k==='b'){ el.burstBtn.click(); }
+    else if (k==='h'){ el.hideUI.checked = !el.hideUI.checked; syncFromUI(); }
+  });
+
+  // Main loop
+  let last = performance.now();
+  let fpsAcc=0,fpsCnt=0,fpsLast=performance.now();
+
+  const samples = [];
+  function ensureSamples(){
+    samples.length = N;
+    for (let i=0;i<N;i++){
+      if (!samples[i]) samples[i] = {vx:0,vy:0,esc:0,de:0,escaped:false};
+    }
+  }
+
+  function loop(now){
+    const rawDt = Math.min(0.05, Math.max(0.001, (now-last)/1000));
+    last = now;
+
+    ensureAlloc();
+    ensureSamples();
+
+    if (!params.paused){
+      const sim = params.step * params.speed;
+      const sub = (sim > 0.03 || params.speed > 1.7) ? 2 : 1;
+      const dt = sim / sub;
+
+      for (let step=0; step<sub; step++){
+        for (let i=0;i<N;i++){
+          if (params.stabilize) stabilizeParticle(i);
+
+          const s = flowAtScreen(px[i], py[i]);
+          samples[i].vx = s.vx;
+          samples[i].vy = s.vy;
+          samples[i].esc = s.esc;
+          samples[i].de = s.de;
+          samples[i].escaped = s.escaped;
+
+          const t = Math.max(0, Math.min(1, s.esc / Math.max(1, params.iters)));
+          const energy = 40 + 120*t;
+
+          const ax = s.vx * energy;
+          const ay = s.vy * energy;
+
+          vx[i] = vx[i]*0.88 + ax*0.12;
+          vy[i] = vy[i]*0.88 + ay*0.12;
+
+          px[i] += vx[i] * dt;
+          py[i] += vy[i] * dt;
+
+          age[i] = (age[i] + 1) & 0xffff;
+        }
+      }
+    } else {
+      if ((now|0) % 3 === 0){
+        for (let i=0;i<N;i+=2){
+          const s = flowAtScreen(px[i], py[i]);
+          samples[i].vx = s.vx; samples[i].vy = s.vy;
+          samples[i].esc = s.esc; samples[i].de = s.de;
+          samples[i].escaped = s.escaped;
+        }
+      }
+    }
+
+    draw(samples);
+
+    fpsAcc += 1/rawDt; fpsCnt++;
+    if (now - fpsLast > 300){
+      el.fps.textContent = (fpsAcc/fpsCnt).toFixed(0);
+      fpsAcc=0; fpsCnt=0; fpsLast=now;
+      el.live.textContent = String(N);
+      el.center.textContent = `${view.cx.toFixed(6)} , ${view.cy.toFixed(6)}`;
+      el.zoom.textContent = `${(2.8 / view.scale).toFixed(2)}×`;
+    }
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
